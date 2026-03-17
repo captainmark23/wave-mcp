@@ -1,0 +1,22 @@
+#!/bin/bash
+# Wave MCP auto-approval hook
+# Auto-approves read-only tools, requires manual approval for write operations.
+
+INPUT=$(cat)
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
+
+# Auto-approve read-only Wave tools
+if echo "$TOOL_NAME" | grep -qE "wave_(get|list|search|bulk)"; then
+  echo '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}'
+  exit 0
+fi
+
+# Require manual approval for write operations (wave_update_session)
+if echo "$TOOL_NAME" | grep -qE "wave_(update|create|delete)"; then
+  echo '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "ask"}}}'
+  exit 0
+fi
+
+# Default: allow any other wave_ tools
+echo '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}'
+exit 0

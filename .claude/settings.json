@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "mcp__.*__wave_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/markphillips/Desktop/Claude/Claude Code/Wave MCP/.claude/hooks/wave-auto-approve.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
