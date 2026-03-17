@@ -8,4 +8,5 @@ if [ -z "$WAVE_API_TOKEN" ]; then
   exit 1
 fi
 
-exec uv run --directory "/Users/markphillips/Desktop/Claude/Claude Code/Wave MCP" python wave_server.py
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec uv run --directory "$SCRIPT_DIR" python wave_server.py
