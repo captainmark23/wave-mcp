@@ -9,14 +9,17 @@ export in bulk, and manage session metadata via Wave's REST API.
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import re
+import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, NoReturn, Optional
 
 import httpx
 from mcp.server.fastmcp import Context, FastMCP, ToolError
@@ -28,11 +31,24 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger("wave_mcp")
 logger.setLevel(logging.INFO)
-# CRITICAL: Use stderr for logging — stdout is reserved for MCP stdio transport
-import sys
-_handler = logging.StreamHandler(sys.stderr)
-_handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s %(message)s"))
-logger.addHandler(_handler)
+_log_fmt = logging.Formatter("%(asctime)s [%(name)s] %(levelname)s %(message)s")
+
+# CRITICAL: Use stderr for console logging — stdout is reserved for MCP stdio transport
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setFormatter(_log_fmt)
+logger.addHandler(_stderr_handler)
+
+# Persistent file logging with rotation (5MB max, 3 backups)
+_log_dir = Path.home() / ".wave-mcp"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_file_handler = logging.handlers.RotatingFileHandler(
+    _log_dir / "wave-mcp.log",
+    maxBytes=5 * 1024 * 1024,
+    backupCount=3,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(_log_fmt)
+logger.addHandler(_file_handler)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -190,7 +206,7 @@ def _sanitize_md(text: str | None) -> str:
     return text
 
 
-def _handle_api_error(e: Exception) -> str:
+def _handle_api_error(e: Exception) -> NoReturn:
     """Raise ToolError with actionable messages for common failure modes.
 
     Raising ToolError sets isError=true in the MCP response so clients

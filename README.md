@@ -87,11 +87,25 @@ All tools support `response_format` parameter: `'markdown'` (default, human-read
 - **Client-side:** 50 requests/minute (configurable)
 - **Wave API:** 60 requests/minute, 1,000/day
 
+## Logs
+
+The server writes a persistent log to `~/.wave-mcp/wave-mcp.log` (5MB max, 3 rotated backups). Check it if the server crashes or disconnects:
+
+```bash
+tail -50 ~/.wave-mcp/wave-mcp.log
+```
+
 ## Troubleshooting
 
 ### Server disconnected in Claude Desktop
 
-Ensure your API token is stored in the Keychain:
+Check the log first:
+
+```bash
+cat ~/.wave-mcp/wave-mcp.log
+```
+
+Then ensure your API token is stored in the Keychain:
 
 ```bash
 security find-generic-password -a wave-mcp -s wave-api-token -w
