@@ -12,6 +12,7 @@ import logging
 import logging.handlers
 import os
 import re
+import subprocess
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -132,15 +133,30 @@ class AppContext:
     rate_limiter: _RateLimiter = field(default_factory=_RateLimiter)
 
 
+def _get_api_token() -> str:
+    """Get Wave API token from env var or macOS Keychain."""
+    token = os.environ.get("WAVE_API_TOKEN", "").strip()
+    if token:
+        return token
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-a", "wave-mcp", "-s", "wave-api-token", "-w"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    raise RuntimeError(
+        "Wave API token not found. Set WAVE_API_TOKEN env var or add to macOS Keychain:\n"
+        "  security add-generic-password -a wave-mcp -s wave-api-token -w YOUR_TOKEN"
+    )
+
+
 @asynccontextmanager
 async def app_lifespan(server: FastMCP):
     """Create a persistent httpx client with Wave auth for the server lifetime."""
-    token = os.environ.get("WAVE_API_TOKEN", "")
-    if not token:
-        raise RuntimeError(
-            "WAVE_API_TOKEN environment variable is required. "
-            "Generate one at https://app.wave.co/settings/integrations/api"
-        )
+    token = _get_api_token()
 
     async with httpx.AsyncClient(
         base_url=API_BASE_URL,
