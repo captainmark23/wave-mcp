@@ -22,7 +22,16 @@ from pathlib import Path
 from typing import Any, NoReturn, Optional
 
 import httpx
-from mcp.server.fastmcp import Context, FastMCP, ToolError
+from mcp.server.fastmcp import Context, FastMCP
+
+try:
+    from mcp.server.fastmcp import ToolError
+except ImportError:
+
+    class ToolError(Exception):
+        """MCP tool error — sets isError=true in the response."""
+
+        pass
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
