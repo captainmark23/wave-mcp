@@ -1474,4 +1474,4 @@ async def wave_update_session(params: UpdateSessionInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="stdio")
