@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Any, Optional
 
 import httpx
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context, FastMCP, ToolError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
@@ -28,7 +28,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger("wave_mcp")
 logger.setLevel(logging.INFO)
-_handler = logging.StreamHandler()
+# CRITICAL: Use stderr for logging — stdout is reserved for MCP stdio transport
+import sys
+_handler = logging.StreamHandler(sys.stderr)
 _handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s %(message)s"))
 logger.addHandler(_handler)
 
@@ -160,16 +162,15 @@ def _get_rate_limiter(ctx: Context) -> _RateLimiter:
     return ctx.request_context.lifespan_context.rate_limiter
 
 
-async def _check_rate_limit(ctx: Context) -> str | None:
-    """Return an error string if rate-limited, else None."""
+async def _check_rate_limit(ctx: Context) -> None:
+    """Raise ToolError if rate-limited."""
     rl = _get_rate_limiter(ctx)
     if not await rl.check():
-        return (
-            "Error: Client-side rate limit reached (50 requests/min). "
+        raise ToolError(
+            "Client-side rate limit reached (50 requests/min). "
             "Wait a moment before retrying. This protects your Wave API quota "
             "(60 req/min, 1000/day)."
         )
-    return None
 
 
 def _sanitize_md(text: str | None) -> str:
@@ -190,44 +191,50 @@ def _sanitize_md(text: str | None) -> str:
 
 
 def _handle_api_error(e: Exception) -> str:
-    """Return actionable error messages for common failure modes."""
+    """Raise ToolError with actionable messages for common failure modes.
+
+    Raising ToolError sets isError=true in the MCP response so clients
+    can distinguish errors from normal tool output.
+    """
     if isinstance(e, httpx.HTTPStatusError):
         status = e.response.status_code
         logger.warning("Wave API error: status=%s url=%s", status, e.request.url.path)
         if status == 401:
-            return (
-                "Error: Authentication failed. Your Wave API token may be invalid or expired. "
+            raise ToolError(
+                "Authentication failed. Your Wave API token may be invalid or expired. "
                 "Generate a new one at https://app.wave.co/settings/integrations/api"
             )
         if status == 403:
-            return (
-                "Error: Permission denied. Your token may lack the required scope for this operation. "
+            raise ToolError(
+                "Permission denied. Your token may lack the required scope for this operation. "
                 "Check token permissions at https://app.wave.co/settings/integrations/api"
             )
         if status == 404:
-            return "Error: Session not found. Please verify the session ID is correct."
+            raise ToolError("Session not found. Please verify the session ID is correct.")
         if status == 429:
-            return (
-                "Error: Rate limit exceeded (60 requests/min, 1000/day). "
+            raise ToolError(
+                "Rate limit exceeded (60 requests/min, 1000/day). "
                 "Wait a moment before retrying."
             )
         if status == 422:
             try:
                 detail = e.response.json()
                 msg = detail.get("message", detail.get("detail", "Invalid request parameters"))
-                return f"Error: Validation failed — {msg}"
+                raise ToolError(f"Validation failed — {msg}")
+            except ToolError:
+                raise
             except Exception:
-                return "Error: Request validation failed. Check your input parameters."
-        return f"Error: Wave API returned status {status}."
+                raise ToolError("Request validation failed. Check your input parameters.")
+        raise ToolError(f"Wave API returned status {status}.")
     if isinstance(e, httpx.TimeoutException):
         logger.warning("Wave API timeout")
-        return "Error: Request timed out. Wave may be temporarily unavailable — try again shortly."
+        raise ToolError("Request timed out. Wave may be temporarily unavailable — try again shortly.")
     if isinstance(e, httpx.ConnectError):
         logger.warning("Wave API connection error")
-        return "Error: Could not connect to Wave API. Check your network connection."
+        raise ToolError("Could not connect to Wave API. Check your network connection.")
     # Generic fallback — never expose raw exception details
     logger.error("Unexpected error communicating with Wave API: %s", type(e).__name__, exc_info=True)
-    return "Error: An unexpected error occurred while communicating with the Wave API. Please try again."
+    raise ToolError("An unexpected error occurred while communicating with the Wave API. Please try again.")
 
 
 def _format_duration(seconds: float | int | None) -> str:
@@ -641,9 +648,7 @@ async def wave_list_sessions(params: ListSessionsInput, ctx: Context) -> str:
         - 401: Invalid or expired API token.
         - 429: Rate limit exceeded.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
         query_params: dict[str, Any] = {}
@@ -693,7 +698,7 @@ async def wave_list_sessions(params: ListSessionsInput, ctx: Context) -> str:
 
         return "\n".join(lines)
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 @mcp.tool(
@@ -746,9 +751,7 @@ async def wave_get_session(params: GetSessionInput, ctx: Context) -> str:
         - 404: Session not found.
         - 401: Invalid or expired API token.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
         logger.info("wave_get_session: id=%s", params.session_id)
@@ -773,7 +776,7 @@ async def wave_get_session(params: GetSessionInput, ctx: Context) -> str:
 
         return _format_session_detail_md(data)
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 @mcp.tool(
@@ -826,9 +829,7 @@ async def wave_get_transcript(params: GetTranscriptInput, ctx: Context) -> str:
         - 404: Session not found or transcript not yet available.
         - 401: Invalid or expired API token.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
         logger.info("wave_get_transcript: id=%s", params.session_id)
@@ -869,7 +870,7 @@ async def wave_get_transcript(params: GetTranscriptInput, ctx: Context) -> str:
 
         return "No transcript available for this session."
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 @mcp.tool(
@@ -878,7 +879,7 @@ async def wave_get_transcript(params: GetTranscriptInput, ctx: Context) -> str:
         "title": "Search Wave Sessions",
         "readOnlyHint": True,
         "destructiveHint": False,
-        "idempotentHint": False,
+        "idempotentHint": True,
         "openWorldHint": True,
     },
 )
@@ -933,9 +934,7 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
         - 401: Invalid or expired API token.
         - 422: Malformed query.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
         logger.info("wave_search_sessions: query='%s' limit=%s offset=%s", params.query[:50], params.limit, params.offset)
@@ -997,7 +996,7 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
 
         return "\n".join(lines)
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 @mcp.tool(
@@ -1055,9 +1054,7 @@ async def wave_get_stats(params: GetStatsInput, ctx: Context) -> str:
         - 401: Invalid or expired API token.
         - 422: Invalid date format.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
         query_params: dict[str, str] = {}
@@ -1097,7 +1094,7 @@ async def wave_get_stats(params: GetStatsInput, ctx: Context) -> str:
 
         return "\n".join(lines)
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 @mcp.tool(
@@ -1162,9 +1159,7 @@ async def wave_bulk_export(params: BulkExportInput, ctx: Context) -> str:
         - 404: One or more session IDs not found (reported per-session in errors array).
         - 401: Invalid or expired API token.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
         logger.info("wave_bulk_export: %d sessions requested", len(params.session_ids))
@@ -1215,7 +1210,7 @@ async def wave_bulk_export(params: BulkExportInput, ctx: Context) -> str:
 
         return "\n".join(lines)
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 @mcp.tool(
@@ -1265,9 +1260,7 @@ async def wave_get_media(params: GetMediaInput, ctx: Context) -> str:
         URLs contain embedded authentication — treat them as sensitive credentials.
         Do not share them publicly or include them in logs.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
         logger.info("wave_get_media: id=%s", params.session_id)
@@ -1305,7 +1298,7 @@ async def wave_get_media(params: GetMediaInput, ctx: Context) -> str:
 
         return "\n".join(lines)
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 @mcp.tool(
@@ -1349,9 +1342,7 @@ async def wave_get_account(params: GetAccountInput, ctx: Context) -> str:
     Errors:
         - 401: Invalid or expired API token.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
         logger.info("wave_get_account called")
@@ -1374,7 +1365,7 @@ async def wave_get_account(params: GetAccountInput, ctx: Context) -> str:
         ]
         return "\n".join(lines)
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 @mcp.tool(
@@ -1426,9 +1417,7 @@ async def wave_update_session(params: UpdateSessionInput, ctx: Context) -> str:
         - 422: Validation error on input fields.
         - 401: Invalid or expired API token.
     """
-    rate_err = await _check_rate_limit(ctx)
-    if rate_err:
-        return rate_err
+    await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
 
@@ -1443,7 +1432,7 @@ async def wave_update_session(params: UpdateSessionInput, ctx: Context) -> str:
             body["favorite"] = params.favorite
 
         if not body:
-            return "Error: No fields to update. Provide at least one of: title, notes, tags, favorite."
+            raise ToolError("No fields to update. Provide at least one of: title, notes, tags, favorite.")
 
         logger.info("wave_update_session: id=%s fields=%s", params.session_id, list(body.keys()))
         resp = await client.patch(f"/sessions/{params.session_id}", json=body)
@@ -1466,7 +1455,7 @@ async def wave_update_session(params: UpdateSessionInput, ctx: Context) -> str:
             f"**Updated at:** {updated_at}"
         )
     except Exception as e:
-        return _handle_api_error(e)
+        _handle_api_error(e)
 
 
 # ---------------------------------------------------------------------------
