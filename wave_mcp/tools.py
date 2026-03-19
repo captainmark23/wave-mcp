@@ -1166,8 +1166,8 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
             return f"Archive is up to date. {len(existing_ids)} sessions already archived in {archive_dir}"
 
         # Step 2: Export in batches of 50 via bulk endpoint
-        archived = []
-        errors = []
+        archived: list[dict] = []
+        errors: list[dict] = []
         total = len(new_sessions)
 
         for batch_start in range(0, total, MAX_BULK_SESSIONS):
