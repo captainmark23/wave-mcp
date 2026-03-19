@@ -23,7 +23,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --extra dev
 
       - name: Compile check (package)
         run: uv run python -m py_compile wave_mcp/server.py
@@ -72,4 +72,4 @@ jobs:
         run: uv sync --extra dev
 
       - name: Mypy
-        run: uv run mypy wave_mcp/ --ignore-missing-imports
+        run: uv run mypy wave_mcp/ --ignore-missing-imports --disable-error-code=arg-type

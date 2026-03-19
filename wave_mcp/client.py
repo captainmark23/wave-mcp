@@ -7,7 +7,7 @@ import httpx
 from mcp.server.fastmcp import Context
 
 try:
-    from mcp.server.fastmcp import ToolError
+    from mcp.server.fastmcp import ToolError  # type: ignore[attr-defined]
 except ImportError:
 
     class ToolError(Exception):  # type: ignore[no-redef]
