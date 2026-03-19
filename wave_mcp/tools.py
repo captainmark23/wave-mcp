@@ -1058,7 +1058,9 @@ async def wave_download_audio(params: DownloadAudioInput, ctx: Context) -> str:
                 async for chunk in dl_resp.aiter_bytes(chunk_size=65536):
                     bytes_written += len(chunk)
                     if bytes_written > MAX_AUDIO_DOWNLOAD_BYTES:
-                        raise ToolError(f"Audio download exceeds maximum size ({MAX_AUDIO_DOWNLOAD_BYTES // (1024*1024)} MB). Download aborted.")
+                        raise ToolError(
+                            f"Audio download exceeds maximum size ({MAX_AUDIO_DOWNLOAD_BYTES // (1024 * 1024)} MB). Download aborted."
+                        )
                     f.write(chunk)
 
         size_mb = output.stat().st_size / (1024 * 1024)
@@ -1300,7 +1302,9 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                                     async for chunk in audio_resp.aiter_bytes(chunk_size=65536):
                                         bytes_written += len(chunk)
                                         if bytes_written > MAX_AUDIO_DOWNLOAD_BYTES:
-                                            raise ToolError(f"Audio download exceeds maximum size ({MAX_AUDIO_DOWNLOAD_BYTES // (1024*1024)} MB). Download aborted.")
+                                            raise ToolError(
+                                                f"Audio download exceeds maximum size ({MAX_AUDIO_DOWNLOAD_BYTES // (1024 * 1024)} MB). Download aborted."
+                                            )
                                         f.write(chunk)
                             audio_count += 1
                 except Exception as exc:
