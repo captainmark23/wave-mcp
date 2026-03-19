@@ -9,7 +9,75 @@ permissions:
   id-token: write
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Compile check (package)
+        run: uv run python -m py_compile wave_mcp/server.py
+
+      - name: Compile check (entry point)
+        run: uv run python -m py_compile wave_server.py
+
+      - name: Import check
+        run: uv run python -c "import wave_mcp.tools; print('Package imports OK')"
+
+      - name: Run tests
+        run: uv run python -m pytest test_wave_server.py -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Mypy
+        run: uv run mypy wave_mcp/ --ignore-missing-imports --disable-error-code=arg-type
+
   publish:
+    needs: [check, lint, typecheck]
     runs-on: ubuntu-latest
     environment:
       name: pypi

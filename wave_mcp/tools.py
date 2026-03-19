@@ -11,24 +11,17 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import Context
 
-try:
-    from mcp.server.fastmcp import ToolError  # type: ignore[attr-defined]
-except ImportError:
-
-    class ToolError(Exception):  # type: ignore[no-redef]
-        """MCP tool error -- sets isError=true in the response."""
-
-        pass
-
-
 from wave_mcp.client import (
+    ToolError,
     _check_rate_limit,
     _get_client,
     _get_rate_limiter,
     _handle_api_error,
 )
 from wave_mcp.constants import (
+    _BLOCKED_DIRS,
     _UUID_PATTERN,
+    MAX_AUDIO_DOWNLOAD_BYTES,
     MAX_BULK_SESSIONS,
     ResponseFormat,
 )
@@ -1049,13 +1042,23 @@ async def wave_download_audio(params: DownloadAudioInput, ctx: Context) -> str:
         output = Path(params.output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
 
+        # Re-validate resolved path at write time (TOCTOU defense)
+        resolved = str(output.resolve())
+        for part in _BLOCKED_DIRS:
+            if resolved.startswith(part + "/") or resolved == part:
+                raise ToolError(f"Resolved output path is inside blocked directory {part}/")
+
         async with (
             httpx.AsyncClient(timeout=300.0, follow_redirects=True) as dl_client,
             dl_client.stream("GET", audio_url) as dl_resp,
         ):
             dl_resp.raise_for_status()
+            bytes_written = 0
             with open(output, "wb") as f:
                 async for chunk in dl_resp.aiter_bytes(chunk_size=65536):
+                    bytes_written += len(chunk)
+                    if bytes_written > MAX_AUDIO_DOWNLOAD_BYTES:
+                        raise ToolError(f"Audio download exceeds maximum size ({MAX_AUDIO_DOWNLOAD_BYTES // (1024*1024)} MB). Download aborted.")
                     f.write(chunk)
 
         size_mb = output.stat().st_size / (1024 * 1024)
@@ -1111,6 +1114,13 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
     try:
         client = _get_client(ctx)
         archive_dir = Path(params.output_dir)
+
+        # Re-validate resolved path at write time (TOCTOU defense)
+        resolved = str(archive_dir.resolve())
+        for part in _BLOCKED_DIRS:
+            if resolved.startswith(part + "/") or resolved == part:
+                raise ToolError(f"Resolved output path is inside blocked directory {part}/")
+
         archive_dir.mkdir(parents=True, exist_ok=True)
 
         # Step 1: Collect all session IDs via list endpoint
@@ -1285,8 +1295,12 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as dl:
                             async with dl.stream("GET", audio_url) as audio_resp:
                                 audio_resp.raise_for_status()
+                                bytes_written = 0
                                 with open(folder_path / "audio.m4a", "wb") as f:
                                     async for chunk in audio_resp.aiter_bytes(chunk_size=65536):
+                                        bytes_written += len(chunk)
+                                        if bytes_written > MAX_AUDIO_DOWNLOAD_BYTES:
+                                            raise ToolError(f"Audio download exceeds maximum size ({MAX_AUDIO_DOWNLOAD_BYTES // (1024*1024)} MB). Download aborted.")
                                         f.write(chunk)
                             audio_count += 1
                 except Exception as exc:

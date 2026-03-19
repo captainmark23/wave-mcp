@@ -39,6 +39,8 @@ def _format_duration(seconds: float | int | None) -> str:
     """Convert seconds to human-readable duration."""
     if seconds is None:
         return "unknown"
+    if seconds < 0:
+        return "0s"
     seconds = int(seconds)
     if seconds < 60:
         return f"{seconds}s"
