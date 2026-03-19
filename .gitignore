@@ -1,8 +1,32 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .venv/
+venv/
 dist/
+build/
 *.egg-info/
+*.egg
+
+# Environment
 .env
+.env.local
+
+# OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs (runtime only, not committed)
+*.log
+
+# Claude Desktop
+.claude/

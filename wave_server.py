@@ -80,7 +80,17 @@ MAX_CURSOR_LENGTH = 500
 SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Known session types — allowlist for defense-in-depth
-VALID_SESSION_TYPES = {"meeting", "call", "webinar", "interview", "presentation"}
+# Includes types observed in real Wave data (recording, recovery, podcast)
+# as well as types documented in the Wave API (meeting, call, webinar, etc.)
+VALID_SESSION_TYPES = {
+    "recording", "recovery", "podcast",  # Common in practice
+    "meeting", "call", "webinar", "interview", "presentation",  # API-documented
+}
+
+# UUID pattern for detecting valid vs corrupted session IDs in search results
+_UUID_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +657,13 @@ async def wave_list_sessions(params: ListSessionsInput, ctx: Context) -> str:
     type, and platform. Use the cursor from the response to paginate through
     older sessions. Use the 'since' parameter to filter by date.
 
+    IMPORTANT: This endpoint only returns completed sessions that have summaries.
+    It may return significantly fewer sessions than the total in your account
+    (e.g., 96 out of 216). Sessions that are still processing, lack summaries,
+    or were created via recovery may be excluded. To discover ALL sessions
+    including those not returned here, use wave_search_sessions with broad
+    queries, or use wave_list_all_sessions for a comprehensive crawl.
+
     Args:
         params (ListSessionsInput): Validated input parameters containing:
             - limit (Optional[int]): Number of sessions to return, 1–100 (default 20).
@@ -992,6 +1009,14 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
         has_more = total > offset + len(results)
         next_offset = offset + len(results) if has_more else None
 
+        # Flag results with corrupted (non-UUID) IDs — these exist in Wave's DB
+        # but cannot be accessed via the REST API
+        for r in results:
+            rid = r.get("id", "")
+            if rid and not _UUID_PATTERN.match(rid):
+                r["_corrupted_id"] = True
+                logger.warning("Search returned non-UUID session ID (length=%d chars) — session is inaccessible via API", len(rid))
+
         if params.response_format == ResponseFormat.JSON:
             return _json_response({
                 "query": params.query,
@@ -1008,6 +1033,7 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
                         "type": r.get("type"),
                         "similarity": r.get("similarity"),
                         "snippet": r.get("snippet"),
+                        **({"warning": "Non-UUID session ID — this session cannot be accessed via the API"} if r.get("_corrupted_id") else {}),
                     }
                     for r in results
                 ],
@@ -1030,7 +1056,10 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
             lines.append(f"**Date:** {ts} · **Type:** {stype} · **Relevance:** {pct}")
             if snippet:
                 lines.append(f"> {snippet}")
-            lines.append(f"`id: {sid}`\n")
+            if r.get("_corrupted_id"):
+                lines.append(f"⚠️ `id: {sid}` — **Non-UUID ID: this session cannot be accessed via the API**\n")
+            else:
+                lines.append(f"`id: {sid}`\n")
 
         if has_more:
             lines.append(f"---\n*{total - offset - len(results)} more results available.* Use `offset: {next_offset}` to load the next page.")
@@ -1496,6 +1525,639 @@ async def wave_update_session(params: UpdateSessionInput, ctx: Context) -> str:
             f"**Updated at:** {updated_at}"
         )
     except Exception as e:
+        _handle_api_error(e)
+
+
+# ---------------------------------------------------------------------------
+# New input models for enhanced tools
+# ---------------------------------------------------------------------------
+
+class ListAllSessionsInput(BaseModel):
+    """Parameters for listing ALL sessions via auto-pagination."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    since: Optional[str] = Field(
+        default=None,
+        description="Only return sessions newer than this ISO 8601 date (e.g. '2025-01-01')",
+    )
+    session_type: Optional[str] = Field(
+        default=None,
+        description="Filter by session type: 'recording', 'recovery', 'podcast', 'meeting', 'call', etc.",
+    )
+    response_format: ResponseFormat = Field(
+        default=ResponseFormat.MARKDOWN,
+        description="Output format: 'markdown' (default) or 'json'",
+    )
+
+    @field_validator("since")
+    @classmethod
+    def validate_since(cls, v: str | None) -> str | None:
+        return _validate_iso_date(v, "since")
+
+    @field_validator("session_type")
+    @classmethod
+    def validate_session_type(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip().lower()
+            if v not in VALID_SESSION_TYPES:
+                raise ValueError(f"session_type must be one of: {', '.join(sorted(VALID_SESSION_TYPES))}. Got: '{v}'")
+        return v
+
+
+class DiscoverAndExportInput(BaseModel):
+    """Parameters for discovering sessions via search and exporting them."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    query: str = Field(
+        ...,
+        description="Search query to discover sessions (e.g. 'meetings about budget Q4')",
+        min_length=1,
+        max_length=500,
+    )
+    max_results: Optional[int] = Field(
+        default=10,
+        description="Max sessions to discover and export (1–50, default 10)",
+        ge=1, le=MAX_BULK_SESSIONS,
+    )
+    include_transcript: bool = Field(default=True, description="Include transcripts (default true)")
+    include_summary: bool = Field(default=True, description="Include summaries (default true)")
+    response_format: ResponseFormat = Field(
+        default=ResponseFormat.MARKDOWN,
+        description="Output format: 'markdown' (default) or 'json'",
+    )
+
+
+class DownloadAudioInput(BaseModel):
+    """Parameters for downloading audio to a local file.
+
+    The output_path must be an absolute path. Parent directories are created
+    automatically. Existing files at the path will be overwritten.
+    """
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    session_id: str = Field(
+        ..., description="The Wave session ID to download audio for", min_length=1
+    )
+    output_path: str = Field(
+        ...,
+        description="Absolute local file path to save the audio (e.g. '/Users/me/Wave/audio.m4a')",
+        min_length=1,
+    )
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, v: str) -> str:
+        return _validate_session_id(v)
+
+    @field_validator("output_path")
+    @classmethod
+    def validate_output_path(cls, v: str) -> str:
+        v = v.strip()
+        if "\x00" in v:
+            raise ValueError("output_path must not contain null bytes")
+        p = Path(v)
+        if not p.is_absolute():
+            raise ValueError("output_path must be an absolute path (e.g. '/Users/me/Wave/audio.m4a')")
+        # Block writes to sensitive system directories
+        blocked = {"/etc", "/usr", "/bin", "/sbin", "/var", "/System", "/Library"}
+        for part in blocked:
+            if v.startswith(part + "/") or v == part:
+                raise ValueError(f"output_path must not be inside {part}/")
+        return v
+
+
+class ExportArchiveInput(BaseModel):
+    """Parameters for exporting a full local archive of all Wave sessions."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    output_dir: str = Field(
+        ...,
+        description="Directory to save the archive (e.g. '/Users/me/Documents/Wave'). Created if it doesn't exist.",
+        min_length=1,
+    )
+    since: Optional[str] = Field(
+        default=None,
+        description="Only archive sessions newer than this ISO 8601 date",
+    )
+    include_audio: bool = Field(
+        default=False,
+        description="Download audio files for each session (default false — can be slow for large archives)",
+    )
+    response_format: ResponseFormat = Field(
+        default=ResponseFormat.MARKDOWN,
+        description="Output format: 'markdown' (default) or 'json'",
+    )
+
+    @field_validator("since")
+    @classmethod
+    def validate_since(cls, v: str | None) -> str | None:
+        return _validate_iso_date(v, "since")
+
+
+# ---------------------------------------------------------------------------
+# Tool: wave_list_all_sessions (#3)
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="wave_list_all_sessions",
+    annotations={
+        "title": "List All Wave Sessions",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def wave_list_all_sessions(params: ListAllSessionsInput, ctx: Context) -> str:
+    """List ALL Wave sessions by auto-paginating through the entire session history.
+
+    Unlike wave_list_sessions (which returns one page at a time), this tool
+    automatically follows cursor-based pagination to collect every session the
+    API returns. Note that the list endpoint only returns completed sessions
+    with summaries — use wave_search_sessions to discover additional sessions
+    that may not appear here.
+
+    Args:
+        params (ListAllSessionsInput): Validated input parameters containing:
+            - since (Optional[str]): Only sessions newer than this ISO 8601 date.
+            - session_type (Optional[str]): Filter by type.
+            - response_format (ResponseFormat): 'markdown' (default) or 'json'.
+
+    Returns:
+        str: All sessions in the requested format with total count.
+    """
+    await _check_rate_limit(ctx)
+    try:
+        client = _get_client(ctx)
+        all_sessions: list[dict] = []
+
+        query_params: dict[str, Any] = {"limit": "100"}
+        if params.since:
+            query_params["since"] = params.since
+        if params.session_type:
+            query_params["type"] = params.session_type
+
+        max_pages = 100  # Safety limit to prevent infinite pagination loops
+        page = 0
+        while True:
+            page += 1
+            if page > max_pages:
+                logger.warning("wave_list_all_sessions: hit max page limit (%d), stopping", max_pages)
+                break
+            logger.info("wave_list_all_sessions: fetching page %d (total so far: %d)", page, len(all_sessions))
+            await ctx.report_progress(len(all_sessions) / max(len(all_sessions) + 100, 1), f"Fetched {len(all_sessions)} sessions...")
+
+            rl = _get_rate_limiter(ctx)
+            if not await rl.check():
+                # Wait briefly and retry rather than failing
+                await asyncio.sleep(2)
+                if not await rl.check():
+                    raise ToolError("Rate limit reached while paginating. Try again in a moment.")
+
+            resp = await client.get("/sessions", params=query_params)
+            resp.raise_for_status()
+            data = resp.json()
+
+            sessions = data.get("sessions", [])
+            all_sessions.extend(sessions)
+
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
+            if not has_more or not next_cursor or not sessions:
+                break
+            query_params["cursor"] = next_cursor
+
+        # Sort oldest first
+        all_sessions.sort(key=lambda s: s.get("timestamp", ""))
+
+        if params.response_format == ResponseFormat.JSON:
+            return _json_response({
+                "total_count": len(all_sessions),
+                "sessions": [
+                    {
+                        "id": s.get("id"),
+                        "title": s.get("title"),
+                        "timestamp": s.get("timestamp"),
+                        "duration_seconds": s.get("duration_seconds"),
+                        "type": s.get("type"),
+                        "platform": s.get("platform"),
+                    }
+                    for s in all_sessions
+                ],
+            })
+
+        lines = [f"## All Wave Sessions ({len(all_sessions)} total)\n"]
+        lines.append(_format_session_list_md(all_sessions))
+        return "\n".join(lines)
+    except Exception as e:
+        if isinstance(e, ToolError):
+            raise
+        _handle_api_error(e)
+
+
+# ---------------------------------------------------------------------------
+# Tool: wave_discover_and_export (#5)
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="wave_discover_and_export",
+    annotations={
+        "title": "Discover and Export Sessions",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def wave_discover_and_export(params: DiscoverAndExportInput, ctx: Context) -> str:
+    """Search for sessions by topic and export them in one step.
+
+    Combines wave_search_sessions and wave_bulk_export into a single operation.
+    Discovers sessions matching your query, then fetches full details including
+    transcripts and summaries. Skips sessions with corrupted (non-UUID) IDs.
+
+    Args:
+        params (DiscoverAndExportInput): Validated input parameters containing:
+            - query (str): Search query to find sessions.
+            - max_results (int): Max sessions to export (1–50, default 10).
+            - include_transcript (bool): Include transcripts (default true).
+            - include_summary (bool): Include summaries (default true).
+            - response_format (ResponseFormat): 'json' (default) or 'markdown'.
+
+    Returns:
+        str: Exported sessions with full content.
+    """
+    await _check_rate_limit(ctx)
+    try:
+        client = _get_client(ctx)
+
+        # Step 1: Search for matching sessions
+        await ctx.report_progress(0.1, "Searching for sessions...")
+        resp = await client.post(
+            "/sessions/search",
+            json={"query": params.query, "limit": params.max_results},
+        )
+        resp.raise_for_status()
+        search_data = resp.json()
+        results = search_data.get("results", [])
+
+        if not results:
+            return "No sessions found matching your query."
+
+        # Filter out corrupted IDs
+        valid_ids = []
+        skipped = []
+        for r in results:
+            rid = r.get("id", "")
+            if _UUID_PATTERN.match(rid):
+                valid_ids.append(rid)
+            else:
+                skipped.append({"id": rid, "title": r.get("title", "?"), "reason": "non-UUID session ID"})
+
+        if not valid_ids:
+            return "Found sessions but all have corrupted IDs that cannot be accessed via the API."
+
+        # Step 2: Bulk export the valid sessions
+        await _check_rate_limit(ctx)
+        await ctx.report_progress(0.4, f"Exporting {len(valid_ids)} sessions...")
+        resp = await client.post(
+            "/sessions/bulk",
+            json={
+                "session_ids": valid_ids,
+                "include_transcript": params.include_transcript,
+                "include_summary": params.include_summary,
+            },
+        )
+        resp.raise_for_status()
+        export_data = resp.json()
+
+        sessions = export_data.get("sessions", [])
+        errors = export_data.get("errors", [])
+
+        if params.response_format == ResponseFormat.JSON:
+            return _json_response({
+                "query": params.query,
+                "discovered": len(results),
+                "exported": len(sessions),
+                "skipped_corrupted_ids": skipped,
+                "sessions": sessions,
+                "errors": errors,
+            })
+
+        lines = [f"## Discover & Export: \"{_sanitize_md(params.query)}\""]
+        lines.append(f"Found {len(results)} matches, exported {len(sessions)}\n")
+        for s in sessions:
+            lines.append(f"### {_sanitize_md(s.get('title', 'Untitled'))}")
+            lines.append(f"`{s.get('id')}` · {s.get('timestamp', '?')} · {_format_duration(s.get('duration_seconds'))}")
+            if s.get("summary"):
+                summary_preview = _sanitize_md(s["summary"])[:500]
+                lines.append(f"\n{summary_preview}{'...' if len(s['summary']) > 500 else ''}\n")
+        if skipped:
+            lines.append("\n**Skipped (corrupted IDs):**")
+            for sk in skipped:
+                lines.append(f"- {_sanitize_md(sk['title'])}: {sk['reason']}")
+        return "\n".join(lines)
+    except Exception as e:
+        if isinstance(e, ToolError):
+            raise
+        _handle_api_error(e)
+
+
+# ---------------------------------------------------------------------------
+# Tool: wave_download_audio (#6)
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="wave_download_audio",
+    annotations={
+        "title": "Download Session Audio",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def wave_download_audio(params: DownloadAudioInput, ctx: Context) -> str:
+    """Download the audio recording for a Wave session to a local file.
+
+    Fetches a signed audio URL (valid for 1 hour) and downloads the audio
+    file to the specified local path. The file is typically .m4a format.
+
+    Args:
+        params (DownloadAudioInput): Validated input parameters containing:
+            - session_id (str): The Wave session ID.
+            - output_path (str): Local file path to save the audio.
+
+    Returns:
+        str: Confirmation with file path and size, or error if no audio available.
+    """
+    await _check_rate_limit(ctx)
+    try:
+        client = _get_client(ctx)
+
+        # Get signed URL
+        await ctx.report_progress(0.1, "Getting signed audio URL...")
+        resp = await client.get(f"/sessions/{params.session_id}/media")
+        resp.raise_for_status()
+        media = resp.json()
+
+        audio_url = media.get("audio_url")
+        if not audio_url:
+            raise ToolError(f"No audio available for session {params.session_id}.")
+
+        # Download the file
+        await ctx.report_progress(0.3, "Downloading audio...")
+        output = Path(params.output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as dl_client:
+            dl_resp = await dl_client.get(audio_url)
+            dl_resp.raise_for_status()
+            output.write_bytes(dl_resp.content)
+
+        size_mb = output.stat().st_size / (1024 * 1024)
+        logger.info("wave_download_audio: saved %s (%.1f MB)", output, size_mb)
+
+        return (
+            f"Audio downloaded successfully.\n"
+            f"**File:** {output}\n"
+            f"**Size:** {size_mb:.1f} MB\n"
+            f"**Session:** {params.session_id}"
+        )
+    except Exception as e:
+        if isinstance(e, ToolError):
+            raise
+        _handle_api_error(e)
+
+
+# ---------------------------------------------------------------------------
+# Tool: wave_export_archive (#8)
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="wave_export_archive",
+    annotations={
+        "title": "Export Full Local Archive",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
+    """Create a complete local archive of all your Wave sessions.
+
+    Downloads metadata, summaries, and transcripts for every accessible session
+    into organized folders named YYYYMMDD_Session-Title/. Each folder contains
+    metadata.json, summary.md, and transcript.md. Optionally downloads audio.
+
+    This is an incremental operation — sessions already archived (detected by
+    existing metadata.json) are skipped, so it's safe to re-run.
+
+    Note: Sessions with corrupted (non-UUID) IDs in Wave's database are
+    automatically skipped, as the API cannot access them. These are rare
+    but exist due to a Wave data integrity issue.
+
+    Args:
+        params (ExportArchiveInput): Validated input parameters containing:
+            - output_dir (str): Directory for the archive.
+            - since (Optional[str]): Only archive sessions after this date.
+            - include_audio (bool): Download audio files (default false).
+            - response_format (ResponseFormat): 'markdown' (default) or 'json'.
+
+    Returns:
+        str: Summary of archived sessions with counts and any errors.
+    """
+    await _check_rate_limit(ctx)
+    try:
+        client = _get_client(ctx)
+        archive_dir = Path(params.output_dir)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        # Step 1: Collect all session IDs via list endpoint
+        await ctx.report_progress(0.05, "Listing all sessions...")
+        all_sessions: list[dict] = []
+        query_params: dict[str, Any] = {"limit": "100"}
+        if params.since:
+            query_params["since"] = params.since
+
+        while True:
+            rl = _get_rate_limiter(ctx)
+            if not await rl.check():
+                await asyncio.sleep(2)
+            resp = await client.get("/sessions", params=query_params)
+            resp.raise_for_status()
+            data = resp.json()
+            sessions = data.get("sessions", [])
+            all_sessions.extend(sessions)
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
+            if not has_more or not next_cursor or not sessions:
+                break
+            query_params["cursor"] = next_cursor
+
+        all_sessions.sort(key=lambda s: s.get("timestamp", ""))
+
+        # Detect already-archived sessions
+        existing_ids: set[str] = set()
+        for meta_path in archive_dir.glob("*/metadata.json"):
+            try:
+                meta = json.loads(meta_path.read_text())
+                existing_ids.add(meta.get("id", ""))
+            except Exception as e:
+                logger.warning("Skipping corrupted metadata at %s: %s", meta_path, e)
+
+        new_sessions = [s for s in all_sessions if s.get("id") not in existing_ids]
+        logger.info("wave_export_archive: %d total, %d already archived, %d new",
+                     len(all_sessions), len(existing_ids), len(new_sessions))
+
+        if not new_sessions:
+            return f"Archive is up to date. {len(existing_ids)} sessions already archived in {archive_dir}"
+
+        # Step 2: Export in batches of 50 via bulk endpoint
+        archived = []
+        errors = []
+        total = len(new_sessions)
+
+        for batch_start in range(0, total, MAX_BULK_SESSIONS):
+            batch = new_sessions[batch_start:batch_start + MAX_BULK_SESSIONS]
+            batch_ids = [s["id"] for s in batch if _UUID_PATTERN.match(s.get("id", ""))]
+
+            if not batch_ids:
+                continue
+
+            pct = (batch_start / total) * 0.8 + 0.1
+            await ctx.report_progress(pct, f"Exporting batch {batch_start // MAX_BULK_SESSIONS + 1} ({len(archived)}/{total} done)...")
+
+            rl = _get_rate_limiter(ctx)
+            if not await rl.check():
+                await asyncio.sleep(2)
+
+            try:
+                resp = await client.post(
+                    "/sessions/bulk",
+                    json={"session_ids": batch_ids, "include_transcript": True, "include_summary": True},
+                )
+                resp.raise_for_status()
+                export_data = resp.json()
+            except Exception as e:
+                logger.warning("Bulk export failed for batch of %d sessions: %s", len(batch_ids), e)
+                errors.append({"id": f"batch ({len(batch_ids)} sessions)", "error": str(e), "session_ids": batch_ids})
+                continue
+
+            for s in export_data.get("sessions", []):
+                sid = s.get("id", "unknown")
+                title = s.get("title", "Untitled")
+                timestamp = s.get("timestamp", "")
+
+                try:
+                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    date_prefix = dt.strftime("%Y%m%d")
+                except Exception:
+                    date_prefix = "00000000"
+
+                safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', title)
+                safe_title = re.sub(r'\s+', '-', safe_title.strip())[:80].rstrip('-') or "untitled"
+                folder_name = f"{date_prefix}_{safe_title}"
+                folder_path = archive_dir / folder_name
+                folder_path.mkdir(parents=True, exist_ok=True)
+
+                # Save metadata
+                metadata = {
+                    "id": sid, "title": title, "timestamp": timestamp,
+                    "duration_seconds": s.get("duration_seconds"),
+                    "duration_human": _format_duration(s.get("duration_seconds")),
+                    "type": s.get("type", "unknown"),
+                    "platform": s.get("platform") or "",
+                    "folder": folder_name,
+                }
+
+                # Save summary
+                if s.get("summary"):
+                    (folder_path / "summary.md").write_text(
+                        f"# {title}\n\n**Date:** {timestamp}  \n**Duration:** {_format_duration(s.get('duration_seconds'))}  \n\n## Summary\n\n{s['summary']}\n",
+                        encoding="utf-8",
+                    )
+                    metadata["has_summary"] = True
+
+                # Save transcript
+                if s.get("transcript"):
+                    (folder_path / "transcript.md").write_text(
+                        f"# Transcript: {title}\n\n**Date:** {timestamp}  \n**Duration:** {_format_duration(s.get('duration_seconds'))}  \n\n---\n\n{s['transcript']}\n",
+                        encoding="utf-8",
+                    )
+                    metadata["has_transcript"] = True
+
+                (folder_path / "metadata.json").write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
+                archived.append(metadata)
+
+            for err in export_data.get("errors", []):
+                errors.append(err)
+
+        # Step 3: Optionally download audio
+        audio_count = 0
+        if params.include_audio:
+            for i, meta in enumerate(archived):
+                sid = meta["id"]
+                folder_path = archive_dir / meta["folder"]
+                if list(folder_path.glob("audio.*")):
+                    continue  # Already has audio
+
+                pct = 0.9 + (i / max(len(archived), 1)) * 0.09
+                await ctx.report_progress(pct, f"Downloading audio {i+1}/{len(archived)}...")
+
+                try:
+                    rl = _get_rate_limiter(ctx)
+                    if not await rl.check():
+                        await asyncio.sleep(2)
+                    resp = await client.get(f"/sessions/{sid}/media")
+                    resp.raise_for_status()
+                    audio_url = resp.json().get("audio_url")
+                    if audio_url:
+                        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as dl:
+                            audio_resp = await dl.get(audio_url)
+                            audio_resp.raise_for_status()
+                            (folder_path / "audio.m4a").write_bytes(audio_resp.content)
+                            audio_count += 1
+                except Exception as e:
+                    logger.debug("Audio download skipped for %s: %s", sid, e)
+
+        # Step 4: Create index
+        all_archived = []
+        for meta_path in sorted(archive_dir.glob("*/metadata.json")):
+            try:
+                all_archived.append(json.loads(meta_path.read_text()))
+            except Exception as e:
+                logger.warning("Skipping corrupted metadata at %s: %s", meta_path, e)
+
+        index = {
+            "archive_date": datetime.utcnow().isoformat() + "Z",
+            "total_sessions": len(all_archived),
+            "new_this_run": len(archived),
+            "errors": len(errors),
+            "audio_downloaded": audio_count,
+        }
+        (archive_dir / "index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
+
+        if params.response_format == ResponseFormat.JSON:
+            return _json_response({**index, "error_details": errors})
+
+        result = (
+            f"## Archive Export Complete\n\n"
+            f"**Location:** {archive_dir}\n"
+            f"**Total sessions in archive:** {len(all_archived)}\n"
+            f"**New this run:** {len(archived)}\n"
+            f"**Audio files downloaded:** {audio_count}\n"
+            f"**Errors:** {len(errors)}\n"
+        )
+        if errors:
+            result += "\n**Error details:**\n"
+            for err in errors[:10]:
+                result += f"- `{err.get('id', '?')}`: {err.get('error', '?')}\n"
+        return result
+    except Exception as e:
+        if isinstance(e, ToolError):
+            raise
         _handle_api_error(e)
 
 
