@@ -76,6 +76,10 @@ MAX_TITLE_LENGTH = 500
 MAX_NOTES_LENGTH = 50_000
 MAX_CURSOR_LENGTH = 500
 
+# Directories that must never be written to — used by path validators
+_BLOCKED_DIRS = {"/etc", "/usr", "/bin", "/sbin", "/var", "/System", "/Library",
+                 "/private", "/private/etc", "/private/var", "/private/tmp"}
+
 # Session IDs must be alphanumeric with hyphens/underscores only — prevents path traversal
 SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -1618,10 +1622,10 @@ class DownloadAudioInput(BaseModel):
         p = Path(v)
         if not p.is_absolute():
             raise ValueError("output_path must be an absolute path (e.g. '/Users/me/Wave/audio.m4a')")
-        # Block writes to sensitive system directories
-        blocked = {"/etc", "/usr", "/bin", "/sbin", "/var", "/System", "/Library"}
-        for part in blocked:
-            if v.startswith(part + "/") or v == part:
+        # Resolve symlinks before checking against blocked directories
+        resolved = str(p.resolve())
+        for part in _BLOCKED_DIRS:
+            if resolved.startswith(part + "/") or resolved == part:
                 raise ValueError(f"output_path must not be inside {part}/")
         return v
 
@@ -1647,6 +1651,22 @@ class ExportArchiveInput(BaseModel):
         default=ResponseFormat.MARKDOWN,
         description="Output format: 'markdown' (default) or 'json'",
     )
+
+    @field_validator("output_dir")
+    @classmethod
+    def validate_output_dir(cls, v: str) -> str:
+        v = v.strip()
+        if "\x00" in v:
+            raise ValueError("output_dir must not contain null bytes")
+        p = Path(v)
+        if not p.is_absolute():
+            raise ValueError("output_dir must be an absolute path (e.g. '/Users/me/Documents/Wave')")
+        # Resolve symlinks before checking against blocked directories
+        resolved = str(p.resolve())
+        for part in _BLOCKED_DIRS:
+            if resolved.startswith(part + "/") or resolved == part:
+                raise ValueError(f"output_dir must not be inside {part}/")
+        return v
 
     @field_validator("since")
     @classmethod
@@ -1911,9 +1931,11 @@ async def wave_download_audio(params: DownloadAudioInput, ctx: Context) -> str:
         output.parent.mkdir(parents=True, exist_ok=True)
 
         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as dl_client:
-            dl_resp = await dl_client.get(audio_url)
-            dl_resp.raise_for_status()
-            output.write_bytes(dl_resp.content)
+            async with dl_client.stream("GET", audio_url) as dl_resp:
+                dl_resp.raise_for_status()
+                with open(output, "wb") as f:
+                    async for chunk in dl_resp.aiter_bytes(chunk_size=65536):
+                        f.write(chunk)
 
         size_mb = output.stat().st_size / (1024 * 1024)
         logger.info("wave_download_audio: saved %s (%.1f MB)", output, size_mb)
@@ -1981,10 +2003,18 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
         if params.since:
             query_params["since"] = params.since
 
+        max_pages = 100  # Safety limit to prevent infinite pagination loops
+        page = 0
         while True:
+            page += 1
+            if page > max_pages:
+                logger.warning("wave_export_archive: hit max page limit (%d), stopping", max_pages)
+                break
             rl = _get_rate_limiter(ctx)
             if not await rl.check():
                 await asyncio.sleep(2)
+                if not await rl.check():
+                    raise ToolError("Rate limit exceeded during archive pagination. Try again later.")
             resp = await client.get("/sessions", params=query_params)
             resp.raise_for_status()
             data = resp.json()
@@ -2032,6 +2062,8 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
             rl = _get_rate_limiter(ctx)
             if not await rl.check():
                 await asyncio.sleep(2)
+                if not await rl.check():
+                    raise ToolError("Rate limit exceeded during batch export. Try again later.")
 
             try:
                 resp = await client.post(
@@ -2042,7 +2074,10 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                 export_data = resp.json()
             except Exception as e:
                 logger.warning("Bulk export failed for batch of %d sessions: %s", len(batch_ids), e)
-                errors.append({"id": f"batch ({len(batch_ids)} sessions)", "error": str(e), "session_ids": batch_ids})
+                raw_err = str(e)[:200]
+                # Strip potential auth tokens from error messages
+                sanitized_err = re.sub(r'Bearer [A-Za-z0-9._~+/=-]+', 'Bearer [REDACTED]', raw_err)
+                errors.append({"id": f"batch ({len(batch_ids)} sessions)", "error": sanitized_err, "session_ids": batch_ids})
                 continue
 
             for s in export_data.get("sessions", []):
@@ -2057,8 +2092,10 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                     date_prefix = "00000000"
 
                 safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', title)
+                safe_title = safe_title.lstrip('.')
                 safe_title = re.sub(r'\s+', '-', safe_title.strip())[:80].rstrip('-') or "untitled"
-                folder_name = f"{date_prefix}_{safe_title}"
+                sid_suffix = sid[:8] if sid else "unknown"
+                folder_name = f"{date_prefix}_{safe_title}_{sid_suffix}"
                 folder_path = archive_dir / folder_name
                 folder_path.mkdir(parents=True, exist_ok=True)
 
@@ -2110,14 +2147,18 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                     rl = _get_rate_limiter(ctx)
                     if not await rl.check():
                         await asyncio.sleep(2)
+                        if not await rl.check():
+                            raise ToolError("Rate limit exceeded during audio download. Try again later.")
                     resp = await client.get(f"/sessions/{sid}/media")
                     resp.raise_for_status()
                     audio_url = resp.json().get("audio_url")
                     if audio_url:
                         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as dl:
-                            audio_resp = await dl.get(audio_url)
-                            audio_resp.raise_for_status()
-                            (folder_path / "audio.m4a").write_bytes(audio_resp.content)
+                            async with dl.stream("GET", audio_url) as audio_resp:
+                                audio_resp.raise_for_status()
+                                with open(folder_path / "audio.m4a", "wb") as f:
+                                    async for chunk in audio_resp.aiter_bytes(chunk_size=65536):
+                                        f.write(chunk)
                             audio_count += 1
                 except Exception as e:
                     logger.debug("Audio download skipped for %s: %s", sid, e)

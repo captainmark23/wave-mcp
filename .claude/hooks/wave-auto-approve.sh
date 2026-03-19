@@ -11,8 +11,8 @@ if echo "$TOOL_NAME" | grep -qE "wave_(get|list|search|bulk)"; then
   exit 0
 fi
 
-# Require manual approval for write operations (wave_update_session)
-if echo "$TOOL_NAME" | grep -qE "wave_(update|create|delete)"; then
+# Require manual approval for write/filesystem operations
+if echo "$TOOL_NAME" | grep -qE "wave_(update|create|delete|download|export)"; then
   echo '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "ask"}}}'
   exit 0
 fi
