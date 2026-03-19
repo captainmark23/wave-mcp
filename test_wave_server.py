@@ -5,7 +5,6 @@ Run with: pytest test_wave_server.py -v
 """
 
 import asyncio
-import time
 
 import pytest
 
@@ -14,10 +13,10 @@ from wave_mcp.formatters import _format_duration, _sanitize_md
 from wave_mcp.rate_limiter import _RateLimiter
 from wave_mcp.validators import _validate_iso_date, _validate_session_id
 
-
 # ---------------------------------------------------------------------------
 # _validate_session_id
 # ---------------------------------------------------------------------------
+
 
 class TestValidateSessionId:
     def test_valid_uuid(self):
@@ -62,6 +61,7 @@ class TestValidateSessionId:
 # _validate_iso_date
 # ---------------------------------------------------------------------------
 
+
 class TestValidateIsoDate:
     def test_none_returns_none(self):
         assert _validate_iso_date(None, "since") is None
@@ -96,6 +96,7 @@ class TestValidateIsoDate:
 # ---------------------------------------------------------------------------
 # _sanitize_md
 # ---------------------------------------------------------------------------
+
 
 class TestSanitizeMd:
     def test_none_returns_empty(self):
@@ -182,6 +183,7 @@ class TestSanitizeMd:
 # _format_duration
 # ---------------------------------------------------------------------------
 
+
 class TestFormatDuration:
     def test_none(self):
         assert _format_duration(None) == "unknown"
@@ -213,6 +215,7 @@ class TestFormatDuration:
 # _BLOCKED_DIRS constant
 # ---------------------------------------------------------------------------
 
+
 class TestBlockedDirs:
     def test_is_a_set(self):
         assert isinstance(_BLOCKED_DIRS, set)
@@ -229,6 +232,7 @@ class TestBlockedDirs:
 # ---------------------------------------------------------------------------
 # _RateLimiter
 # ---------------------------------------------------------------------------
+
 
 class TestRateLimiter:
     @pytest.fixture

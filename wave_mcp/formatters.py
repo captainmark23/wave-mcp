@@ -17,16 +17,16 @@ def _sanitize_md(text: str | None) -> str:
     # Normalize line endings
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     # Strip structural markdown injection patterns
-    text = re.sub(r'\n#{1,6}\s', '\n', text)  # headings
-    text = re.sub(r'\n---+', '\n', text)  # horizontal rules
-    text = re.sub(r'\n>', '\n', text)  # blockquotes
-    text = re.sub(r'\n```', '\n', text)  # code fences
+    text = re.sub(r"\n#{1,6}\s", "\n", text)  # headings
+    text = re.sub(r"\n---+", "\n", text)  # horizontal rules
+    text = re.sub(r"\n>", "\n", text)  # blockquotes
+    text = re.sub(r"\n```", "\n", text)  # code fences
     # Preserve paragraph breaks, collapse other whitespace
-    paragraphs = re.split(r'\n{2,}', text)
+    paragraphs = re.split(r"\n{2,}", text)
     sanitized = []
     for para in paragraphs:
         # Collapse single newlines to spaces within paragraphs
-        para = para.replace('\n', ' ').strip()
+        para = para.replace("\n", " ").strip()
         # Escape markdown formatting characters
         for ch in r"\`*_{}[]()#+-.!|~":
             para = para.replace(ch, f"\\{ch}")

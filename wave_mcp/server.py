@@ -45,9 +45,11 @@ logger.addHandler(_file_handler)
 # Lifespan -- persistent HTTP client with auth
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AppContext:
     """Shared state available to all tools via lifespan."""
+
     client: httpx.AsyncClient
     rate_limiter: _RateLimiter = field(default_factory=_RateLimiter)
 
@@ -60,7 +62,9 @@ def _get_api_token() -> str:
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-a", "wave-mcp", "-s", "wave-api-token", "-w"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()

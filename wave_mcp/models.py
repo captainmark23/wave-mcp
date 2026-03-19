@@ -1,7 +1,6 @@
 """Pydantic input models for Wave MCP Server tools."""
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -27,23 +26,25 @@ from wave_mcp.validators import (
 
 class ListSessionsInput(BaseModel):
     """Parameters for listing Wave sessions."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    limit: Optional[int] = Field(
+    limit: int | None = Field(
         default=DEFAULT_PAGINATION_LIMIT,
         description="Number of sessions to return (1-100, default 20)",
-        ge=1, le=MAX_PAGINATION_LIMIT,
+        ge=1,
+        le=MAX_PAGINATION_LIMIT,
     )
-    cursor: Optional[str] = Field(
+    cursor: str | None = Field(
         default=None,
         description="Pagination cursor from a previous response's next_cursor",
         max_length=MAX_CURSOR_LENGTH,
     )
-    since: Optional[str] = Field(
+    since: str | None = Field(
         default=None,
         description="Only return sessions newer than this ISO 8601 date (e.g. '2025-01-01')",
     )
-    session_type: Optional[str] = Field(
+    session_type: str | None = Field(
         default=None,
         description="Filter by session type: 'meeting', 'call', 'webinar', 'interview', or 'presentation'",
     )
@@ -77,11 +78,10 @@ class ListSessionsInput(BaseModel):
 
 class GetSessionInput(BaseModel):
     """Parameters for retrieving a single session."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    session_id: str = Field(
-        ..., description="The Wave session ID to retrieve (e.g. 'ses_abc123')", min_length=1
-    )
+    session_id: str = Field(..., description="The Wave session ID to retrieve (e.g. 'ses_abc123')", min_length=1)
     response_format: ResponseFormat = Field(
         default=ResponseFormat.MARKDOWN,
         description="Output format: 'markdown' for human-readable (default) or 'json' for structured data",
@@ -95,11 +95,10 @@ class GetSessionInput(BaseModel):
 
 class GetTranscriptInput(BaseModel):
     """Parameters for retrieving a session transcript."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    session_id: str = Field(
-        ..., description="The Wave session ID whose transcript to retrieve", min_length=1
-    )
+    session_id: str = Field(..., description="The Wave session ID whose transcript to retrieve", min_length=1)
     response_format: ResponseFormat = Field(
         default=ResponseFormat.MARKDOWN,
         description="Output format: 'markdown' for human-readable (default) or 'json' for structured data",
@@ -113,6 +112,7 @@ class GetTranscriptInput(BaseModel):
 
 class SearchSessionsInput(BaseModel):
     """Parameters for semantic search across sessions."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     query: str = Field(
@@ -124,12 +124,13 @@ class SearchSessionsInput(BaseModel):
         min_length=1,
         max_length=500,
     )
-    limit: Optional[int] = Field(
+    limit: int | None = Field(
         default=10,
         description="Max results to return (1-50, default 10)",
-        ge=1, le=MAX_SEARCH_RESULTS,
+        ge=1,
+        le=MAX_SEARCH_RESULTS,
     )
-    offset: Optional[int] = Field(
+    offset: int | None = Field(
         default=0,
         description="Number of results to skip for pagination (default 0)",
         ge=0,
@@ -149,13 +150,14 @@ class SearchSessionsInput(BaseModel):
 
 class GetStatsInput(BaseModel):
     """Parameters for aggregated session statistics."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    since: Optional[str] = Field(
+    since: str | None = Field(
         default=None,
         description="Start date for stats period (ISO 8601). Defaults to 30 days ago.",
     )
-    until: Optional[str] = Field(
+    until: str | None = Field(
         default=None,
         description="End date for stats period (ISO 8601). Defaults to now.",
     )
@@ -177,6 +179,7 @@ class GetStatsInput(BaseModel):
 
 class BulkExportInput(BaseModel):
     """Parameters for bulk session export."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     session_ids: list[str] = Field(
@@ -206,6 +209,7 @@ class BulkExportInput(BaseModel):
 
 class GetAccountInput(BaseModel):
     """Parameters for retrieving Wave account info."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     response_format: ResponseFormat = Field(
@@ -216,11 +220,10 @@ class GetAccountInput(BaseModel):
 
 class GetMediaInput(BaseModel):
     """Parameters for retrieving signed media URLs."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    session_id: str = Field(
-        ..., description="The Wave session ID to get audio/video URLs for", min_length=1
-    )
+    session_id: str = Field(..., description="The Wave session ID to get audio/video URLs for", min_length=1)
     response_format: ResponseFormat = Field(
         default=ResponseFormat.MARKDOWN,
         description="Output format: 'markdown' for human-readable (default) or 'json' for structured data",
@@ -234,27 +237,26 @@ class GetMediaInput(BaseModel):
 
 class UpdateSessionInput(BaseModel):
     """Parameters for updating session metadata."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    session_id: str = Field(
-        ..., description="The Wave session ID to update", min_length=1
-    )
-    title: Optional[str] = Field(
+    session_id: str = Field(..., description="The Wave session ID to update", min_length=1)
+    title: str | None = Field(
         default=None,
         description="New session title (max 500 chars)",
         max_length=MAX_TITLE_LENGTH,
     )
-    notes: Optional[str] = Field(
+    notes: str | None = Field(
         default=None,
         description="New session notes (max 50,000 chars)",
         max_length=MAX_NOTES_LENGTH,
     )
-    tags: Optional[list[str]] = Field(
+    tags: list[str] | None = Field(
         default=None,
         description="Replace tags (max 20 tags, each max 100 chars)",
         max_length=MAX_TAGS,
     )
-    favorite: Optional[bool] = Field(
+    favorite: bool | None = Field(
         default=None,
         description="Set or unset favorite status",
     )
@@ -280,13 +282,14 @@ class UpdateSessionInput(BaseModel):
 
 class ListAllSessionsInput(BaseModel):
     """Parameters for listing ALL sessions via auto-pagination."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    since: Optional[str] = Field(
+    since: str | None = Field(
         default=None,
         description="Only return sessions newer than this ISO 8601 date (e.g. '2025-01-01')",
     )
-    session_type: Optional[str] = Field(
+    session_type: str | None = Field(
         default=None,
         description="Filter by session type: 'recording', 'recovery', 'podcast', 'meeting', 'call', etc.",
     )
@@ -308,6 +311,7 @@ class ListAllSessionsInput(BaseModel):
 
 class DiscoverAndExportInput(BaseModel):
     """Parameters for discovering sessions via search and exporting them."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     query: str = Field(
@@ -316,10 +320,11 @@ class DiscoverAndExportInput(BaseModel):
         min_length=1,
         max_length=500,
     )
-    max_results: Optional[int] = Field(
+    max_results: int | None = Field(
         default=10,
         description="Max sessions to discover and export (1-50, default 10)",
-        ge=1, le=MAX_BULK_SESSIONS,
+        ge=1,
+        le=MAX_BULK_SESSIONS,
     )
     include_transcript: bool = Field(default=True, description="Include transcripts (default true)")
     include_summary: bool = Field(default=True, description="Include summaries (default true)")
@@ -335,11 +340,10 @@ class DownloadAudioInput(BaseModel):
     The output_path must be an absolute path. Parent directories are created
     automatically. Existing files at the path will be overwritten.
     """
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    session_id: str = Field(
-        ..., description="The Wave session ID to download audio for", min_length=1
-    )
+    session_id: str = Field(..., description="The Wave session ID to download audio for", min_length=1)
     output_path: str = Field(
         ...,
         description="Absolute local file path to save the audio (e.g. '/Users/me/Wave/audio.m4a')",
@@ -370,6 +374,7 @@ class DownloadAudioInput(BaseModel):
 
 class ExportArchiveInput(BaseModel):
     """Parameters for exporting a full local archive of all Wave sessions."""
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     output_dir: str = Field(
@@ -377,7 +382,7 @@ class ExportArchiveInput(BaseModel):
         description="Directory to save the archive (e.g. '/Users/me/Documents/Wave'). Created if it doesn't exist.",
         min_length=1,
     )
-    since: Optional[str] = Field(
+    since: str | None = Field(
         default=None,
         description="Only archive sessions newer than this ISO 8601 date",
     )

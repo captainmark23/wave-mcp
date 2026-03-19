@@ -15,6 +15,7 @@ except ImportError:
 
         pass
 
+
 from wave_mcp.rate_limiter import _RateLimiter
 
 logger = logging.getLogger("wave_mcp")
@@ -63,10 +64,7 @@ def _handle_api_error(e: Exception) -> NoReturn:
         if status == 404:
             raise ToolError("Session not found. Please verify the session ID is correct.")
         if status == 429:
-            raise ToolError(
-                "Rate limit exceeded (60 requests/min, 1000/day). "
-                "Wait a moment before retrying."
-            )
+            raise ToolError("Rate limit exceeded (60 requests/min, 1000/day). Wait a moment before retrying.")
         if status == 422:
             try:
                 detail = e.response.json()
@@ -75,7 +73,7 @@ def _handle_api_error(e: Exception) -> NoReturn:
             except ToolError:
                 raise
             except Exception:
-                raise ToolError("Request validation failed. Check your input parameters.")
+                raise ToolError("Request validation failed. Check your input parameters.") from None
         raise ToolError(f"Wave API returned status {status}.")
     if isinstance(e, httpx.TimeoutException):
         logger.warning("Wave API timeout")

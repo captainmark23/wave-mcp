@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,7 @@ except ImportError:
 
         pass
 
+
 from wave_mcp.client import (
     _check_rate_limit,
     _get_client,
@@ -27,9 +28,9 @@ from wave_mcp.client import (
     _handle_api_error,
 )
 from wave_mcp.constants import (
+    _UUID_PATTERN,
     MAX_BULK_SESSIONS,
     ResponseFormat,
-    _UUID_PATTERN,
 )
 from wave_mcp.formatters import (
     _format_duration,
@@ -126,29 +127,31 @@ async def wave_list_sessions(params: ListSessionsInput, ctx: Context) -> str:
         total_count = data.get("total_count")
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "total_count": total_count,
-                "count": len(sessions),
-                "has_more": has_more,
-                "next_cursor": next_cursor,
-                "sessions": [
-                    {
-                        "id": s.get("id"),
-                        "title": s.get("title"),
-                        "timestamp": s.get("timestamp"),
-                        "duration_seconds": s.get("duration_seconds"),
-                        "type": s.get("type"),
-                        "platform": s.get("platform"),
-                    }
-                    for s in sessions
-                ],
-            })
+            return _json_response(
+                {
+                    "total_count": total_count,
+                    "count": len(sessions),
+                    "has_more": has_more,
+                    "next_cursor": next_cursor,
+                    "sessions": [
+                        {
+                            "id": s.get("id"),
+                            "title": s.get("title"),
+                            "timestamp": s.get("timestamp"),
+                            "duration_seconds": s.get("duration_seconds"),
+                            "type": s.get("type"),
+                            "platform": s.get("platform"),
+                        }
+                        for s in sessions
+                    ],
+                }
+            )
 
         lines = [f"## Wave Sessions ({len(sessions)} returned)\n"]
         lines.append(_format_session_list_md(sessions))
 
         if has_more and next_cursor:
-            lines.append(f"\n---\n*More sessions available.* Use `cursor: \"{next_cursor}\"` to load the next page.")
+            lines.append(f'\n---\n*More sessions available.* Use `cursor: "{next_cursor}"` to load the next page.')
 
         return "\n".join(lines)
     except Exception as e:
@@ -194,19 +197,21 @@ async def wave_get_session(params: GetSessionInput, ctx: Context) -> str:
         data = resp.json()
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "id": data.get("id"),
-                "title": data.get("title"),
-                "timestamp": data.get("timestamp"),
-                "duration_seconds": data.get("duration_seconds"),
-                "type": data.get("type"),
-                "platform": data.get("platform"),
-                "language": data.get("language"),
-                "favorite": data.get("favorite", False),
-                "tags": data.get("tags", []),
-                "summary": data.get("summary"),
-                "notes": data.get("notes"),
-            })
+            return _json_response(
+                {
+                    "id": data.get("id"),
+                    "title": data.get("title"),
+                    "timestamp": data.get("timestamp"),
+                    "duration_seconds": data.get("duration_seconds"),
+                    "type": data.get("type"),
+                    "platform": data.get("platform"),
+                    "language": data.get("language"),
+                    "favorite": data.get("favorite", False),
+                    "tags": data.get("tags", []),
+                    "summary": data.get("summary"),
+                    "notes": data.get("notes"),
+                }
+            )
 
         return _format_session_detail_md(data)
     except Exception as e:
@@ -255,19 +260,21 @@ async def wave_get_transcript(params: GetTranscriptInput, ctx: Context) -> str:
         segments = data.get("segments")
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "session_id": params.session_id,
-                "segment_count": len(segments) if segments else 0,
-                "segments": [
-                    {
-                        "speaker": seg.get("speaker", "Unknown"),
-                        "start": seg.get("start", 0),
-                        "end": seg.get("end"),
-                        "text": seg.get("text", ""),
-                    }
-                    for seg in (segments or [])
-                ],
-            })
+            return _json_response(
+                {
+                    "session_id": params.session_id,
+                    "segment_count": len(segments) if segments else 0,
+                    "segments": [
+                        {
+                            "speaker": seg.get("speaker", "Unknown"),
+                            "start": seg.get("start", 0),
+                            "end": seg.get("end"),
+                            "text": seg.get("text", ""),
+                        }
+                        for seg in (segments or [])
+                    ],
+                }
+            )
 
         if segments:
             lines = ["## Transcript\n"]
@@ -325,7 +332,9 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
     await _check_rate_limit(ctx)
     try:
         client = _get_client(ctx)
-        logger.info("wave_search_sessions: query='%s' limit=%s offset=%s", params.query[:50], params.limit, params.offset)
+        logger.info(
+            "wave_search_sessions: query='%s' limit=%s offset=%s", params.query[:50], params.limit, params.offset
+        )
         resp = await client.post(
             "/sessions/search",
             json={"query": params.query, "limit": params.limit, "offset": params.offset},
@@ -344,34 +353,42 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
             rid = r.get("id", "")
             if rid and not _UUID_PATTERN.match(rid):
                 r["_corrupted_id"] = True
-                logger.warning("Search returned non-UUID session ID (length=%d chars) -- session is inaccessible via API", len(rid))
+                logger.warning(
+                    "Search returned non-UUID session ID (length=%d chars) -- session is inaccessible via API", len(rid)
+                )
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "query": params.query,
-                "total": total,
-                "count": len(results),
-                "offset": offset,
-                "has_more": has_more,
-                "next_offset": next_offset,
-                "results": [
-                    {
-                        "id": r.get("id"),
-                        "title": r.get("title"),
-                        "timestamp": r.get("timestamp"),
-                        "type": r.get("type"),
-                        "similarity": r.get("similarity"),
-                        "snippet": r.get("snippet"),
-                        **({"warning": "Non-UUID session ID -- this session cannot be accessed via the API"} if r.get("_corrupted_id") else {}),
-                    }
-                    for r in results
-                ],
-            })
+            return _json_response(
+                {
+                    "query": params.query,
+                    "total": total,
+                    "count": len(results),
+                    "offset": offset,
+                    "has_more": has_more,
+                    "next_offset": next_offset,
+                    "results": [
+                        {
+                            "id": r.get("id"),
+                            "title": r.get("title"),
+                            "timestamp": r.get("timestamp"),
+                            "type": r.get("type"),
+                            "similarity": r.get("similarity"),
+                            "snippet": r.get("snippet"),
+                            **(
+                                {"warning": "Non-UUID session ID -- this session cannot be accessed via the API"}
+                                if r.get("_corrupted_id")
+                                else {}
+                            ),
+                        }
+                        for r in results
+                    ],
+                }
+            )
 
         if not results:
-            return f"No sessions found matching: \"{_sanitize_md(params.query)}\""
+            return f'No sessions found matching: "{_sanitize_md(params.query)}"'
 
-        lines = [f"## Search Results for \"{_sanitize_md(params.query)}\" ({total} total matches)\n"]
+        lines = [f'## Search Results for "{_sanitize_md(params.query)}" ({total} total matches)\n']
         for r in results:
             title = _sanitize_md(r.get("title", "Untitled"))
             sid = r.get("id", "")
@@ -391,7 +408,9 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
                 lines.append(f"`id: {sid}`\n")
 
         if has_more:
-            lines.append(f"---\n*{total - offset - len(results)} more results available.* Use `offset: {next_offset}` to load the next page.")
+            lines.append(
+                f"---\n*{total - offset - len(results)} more results available.* Use `offset: {next_offset}` to load the next page."
+            )
 
         return "\n".join(lines)
     except Exception as e:
@@ -528,24 +547,31 @@ async def wave_bulk_export(params: BulkExportInput, ctx: Context) -> str:
         await ctx.report_progress(0.8, "Formatting results...")
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "count": len(sessions),
-                "error_count": len(errors),
-                "sessions": sessions,
-                "errors": errors,
-            })
+            return _json_response(
+                {
+                    "count": len(sessions),
+                    "error_count": len(errors),
+                    "sessions": sessions,
+                    "errors": errors,
+                }
+            )
 
         lines = [f"## Bulk Export ({len(sessions)} sessions)\n"]
 
         for s in sessions:
             lines.append(f"### {_sanitize_md(s.get('title', 'Untitled'))}")
-            lines.append(f"**ID:** `{s.get('id')}` . **Date:** {s.get('timestamp', '?')} . **Duration:** {_format_duration(s.get('duration_seconds'))}")
+            lines.append(
+                f"**ID:** `{s.get('id')}` . **Date:** {s.get('timestamp', '?')} . **Duration:** {_format_duration(s.get('duration_seconds'))}"
+            )
             if s.get("summary"):
                 lines.append(f"\n**Summary:** {_sanitize_md(s['summary'])}")
             if s.get("transcript"):
                 transcript = _sanitize_md(s["transcript"])
                 if len(transcript) > 2000:
-                    transcript = transcript[:2000] + "\n\n*\\[Transcript truncated -- use wave\\_get\\_transcript for the full text\\]*"
+                    transcript = (
+                        transcript[:2000]
+                        + "\n\n*\\[Transcript truncated -- use wave\\_get\\_transcript for the full text\\]*"
+                    )
                 lines.append(f"\n<details><summary>Transcript</summary>\n\n{transcript}\n</details>")
             lines.append("")
 
@@ -606,13 +632,15 @@ async def wave_get_media(params: GetMediaInput, ctx: Context) -> str:
         expires = data.get("expires_at", "unknown")
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "id": data.get("id", params.session_id),
-                "audio_url": audio_url,
-                "video_url": video_url,
-                "expires_at": expires,
-                "warning": "These URLs contain embedded authentication tokens. Do not share publicly.",
-            })
+            return _json_response(
+                {
+                    "id": data.get("id", params.session_id),
+                    "audio_url": audio_url,
+                    "video_url": video_url,
+                    "expires_at": expires,
+                    "warning": "These URLs contain embedded authentication tokens. Do not share publicly.",
+                }
+            )
 
         lines = [f"## Media for Session `{data.get('id', params.session_id)}`\n"]
 
@@ -627,7 +655,9 @@ async def wave_get_media(params: GetMediaInput, ctx: Context) -> str:
             lines.append("**Video:** Not available")
 
         lines.append(f"\n*URLs expire at {expires} (approximately 1 hour from now).*")
-        lines.append("\n**SENSITIVE:** These URLs contain embedded authentication tokens. Do not share them publicly or include them in logs.")
+        lines.append(
+            "\n**SENSITIVE:** These URLs contain embedded authentication tokens. Do not share them publicly or include them in logs."
+        )
 
         return "\n".join(lines)
     except Exception as e:
@@ -670,11 +700,13 @@ async def wave_get_account(params: GetAccountInput, ctx: Context) -> str:
         data = resp.json()
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "user_id": data.get("user_id", "unknown"),
-                "subscription_active": data.get("subscription_active", False),
-                "session_count": data.get("session_count", 0),
-            })
+            return _json_response(
+                {
+                    "user_id": data.get("user_id", "unknown"),
+                    "subscription_active": data.get("subscription_active", False),
+                    "session_count": data.get("session_count", 0),
+                }
+            )
 
         lines = [
             "## Wave Account\n",
@@ -748,11 +780,13 @@ async def wave_update_session(params: UpdateSessionInput, ctx: Context) -> str:
         updated_at = data.get("updated_at", "now")
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "id": data.get("id", params.session_id),
-                "updated_fields": updated,
-                "updated_at": updated_at,
-            })
+            return _json_response(
+                {
+                    "id": data.get("id", params.session_id),
+                    "updated_fields": updated,
+                    "updated_at": updated_at,
+                }
+            )
 
         return (
             f"Session `{data.get('id', params.session_id)}` updated successfully.\n"
@@ -812,7 +846,9 @@ async def wave_list_all_sessions(params: ListAllSessionsInput, ctx: Context) -> 
                 logger.warning("wave_list_all_sessions: hit max page limit (%d), stopping", max_pages)
                 break
             logger.info("wave_list_all_sessions: fetching page %d (total so far: %d)", page, len(all_sessions))
-            await ctx.report_progress(len(all_sessions) / max(len(all_sessions) + 100, 1), f"Fetched {len(all_sessions)} sessions...")
+            await ctx.report_progress(
+                len(all_sessions) / max(len(all_sessions) + 100, 1), f"Fetched {len(all_sessions)} sessions..."
+            )
 
             rl = _get_rate_limiter(ctx)
             if not await rl.check():
@@ -838,20 +874,22 @@ async def wave_list_all_sessions(params: ListAllSessionsInput, ctx: Context) -> 
         all_sessions.sort(key=lambda s: s.get("timestamp", ""))
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "total_count": len(all_sessions),
-                "sessions": [
-                    {
-                        "id": s.get("id"),
-                        "title": s.get("title"),
-                        "timestamp": s.get("timestamp"),
-                        "duration_seconds": s.get("duration_seconds"),
-                        "type": s.get("type"),
-                        "platform": s.get("platform"),
-                    }
-                    for s in all_sessions
-                ],
-            })
+            return _json_response(
+                {
+                    "total_count": len(all_sessions),
+                    "sessions": [
+                        {
+                            "id": s.get("id"),
+                            "title": s.get("title"),
+                            "timestamp": s.get("timestamp"),
+                            "duration_seconds": s.get("duration_seconds"),
+                            "type": s.get("type"),
+                            "platform": s.get("platform"),
+                        }
+                        for s in all_sessions
+                    ],
+                }
+            )
 
         lines = [f"## All Wave Sessions ({len(all_sessions)} total)\n"]
         lines.append(_format_session_list_md(all_sessions))
@@ -938,16 +976,18 @@ async def wave_discover_and_export(params: DiscoverAndExportInput, ctx: Context)
         errors = export_data.get("errors", [])
 
         if params.response_format == ResponseFormat.JSON:
-            return _json_response({
-                "query": params.query,
-                "discovered": len(results),
-                "exported": len(sessions),
-                "skipped_corrupted_ids": skipped,
-                "sessions": sessions,
-                "errors": errors,
-            })
+            return _json_response(
+                {
+                    "query": params.query,
+                    "discovered": len(results),
+                    "exported": len(sessions),
+                    "skipped_corrupted_ids": skipped,
+                    "sessions": sessions,
+                    "errors": errors,
+                }
+            )
 
-        lines = [f"## Discover & Export: \"{_sanitize_md(params.query)}\""]
+        lines = [f'## Discover & Export: "{_sanitize_md(params.query)}"']
         lines.append(f"Found {len(results)} matches, exported {len(sessions)}\n")
         for s in sessions:
             lines.append(f"### {_sanitize_md(s.get('title', 'Untitled'))}")
@@ -1009,12 +1049,14 @@ async def wave_download_audio(params: DownloadAudioInput, ctx: Context) -> str:
         output = Path(params.output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
 
-        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as dl_client:
-            async with dl_client.stream("GET", audio_url) as dl_resp:
-                dl_resp.raise_for_status()
-                with open(output, "wb") as f:
-                    async for chunk in dl_resp.aiter_bytes(chunk_size=65536):
-                        f.write(chunk)
+        async with (
+            httpx.AsyncClient(timeout=300.0, follow_redirects=True) as dl_client,
+            dl_client.stream("GET", audio_url) as dl_resp,
+        ):
+            dl_resp.raise_for_status()
+            with open(output, "wb") as f:
+                async for chunk in dl_resp.aiter_bytes(chunk_size=65536):
+                    f.write(chunk)
 
         size_mb = output.stat().st_size / (1024 * 1024)
         logger.info("wave_download_audio: saved %s (%.1f MB)", output, size_mb)
@@ -1113,8 +1155,12 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                 logger.warning("Skipping corrupted metadata at %s: %s", meta_path, exc)
 
         new_sessions = [s for s in all_sessions if s.get("id") not in existing_ids]
-        logger.info("wave_export_archive: %d total, %d already archived, %d new",
-                     len(all_sessions), len(existing_ids), len(new_sessions))
+        logger.info(
+            "wave_export_archive: %d total, %d already archived, %d new",
+            len(all_sessions),
+            len(existing_ids),
+            len(new_sessions),
+        )
 
         if not new_sessions:
             return f"Archive is up to date. {len(existing_ids)} sessions already archived in {archive_dir}"
@@ -1125,14 +1171,16 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
         total = len(new_sessions)
 
         for batch_start in range(0, total, MAX_BULK_SESSIONS):
-            batch = new_sessions[batch_start:batch_start + MAX_BULK_SESSIONS]
+            batch = new_sessions[batch_start : batch_start + MAX_BULK_SESSIONS]
             batch_ids = [s["id"] for s in batch if _UUID_PATTERN.match(s.get("id", ""))]
 
             if not batch_ids:
                 continue
 
             pct = (batch_start / total) * 0.8 + 0.1
-            await ctx.report_progress(pct, f"Exporting batch {batch_start // MAX_BULK_SESSIONS + 1} ({len(archived)}/{total} done)...")
+            await ctx.report_progress(
+                pct, f"Exporting batch {batch_start // MAX_BULK_SESSIONS + 1} ({len(archived)}/{total} done)..."
+            )
 
             rl = _get_rate_limiter(ctx)
             if not await rl.check():
@@ -1151,8 +1199,10 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                 logger.warning("Bulk export failed for batch of %d sessions: %s", len(batch_ids), exc)
                 raw_err = str(exc)[:200]
                 # Strip potential auth tokens from error messages
-                sanitized_err = re.sub(r'Bearer [A-Za-z0-9._~+/=-]+', 'Bearer [REDACTED]', raw_err)
-                errors.append({"id": f"batch ({len(batch_ids)} sessions)", "error": sanitized_err, "session_ids": batch_ids})
+                sanitized_err = re.sub(r"Bearer [A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", raw_err)
+                errors.append(
+                    {"id": f"batch ({len(batch_ids)} sessions)", "error": sanitized_err, "session_ids": batch_ids}
+                )
                 continue
 
             for s in export_data.get("sessions", []):
@@ -1166,9 +1216,9 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                 except Exception:
                     date_prefix = "00000000"
 
-                safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', title)
-                safe_title = safe_title.lstrip('.')
-                safe_title = re.sub(r'\s+', '-', safe_title.strip())[:80].rstrip('-') or "untitled"
+                safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", title)
+                safe_title = safe_title.lstrip(".")
+                safe_title = re.sub(r"\s+", "-", safe_title.strip())[:80].rstrip("-") or "untitled"
                 sid_suffix = sid[:8] if sid else "unknown"
                 folder_name = f"{date_prefix}_{safe_title}_{sid_suffix}"
                 folder_path = archive_dir / folder_name
@@ -1176,7 +1226,9 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
 
                 # Save metadata
                 metadata = {
-                    "id": sid, "title": title, "timestamp": timestamp,
+                    "id": sid,
+                    "title": title,
+                    "timestamp": timestamp,
                     "duration_seconds": s.get("duration_seconds"),
                     "duration_human": _format_duration(s.get("duration_seconds")),
                     "type": s.get("type", "unknown"),
@@ -1200,7 +1252,9 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                     )
                     metadata["has_transcript"] = True
 
-                (folder_path / "metadata.json").write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
+                (folder_path / "metadata.json").write_text(
+                    json.dumps(metadata, indent=2, default=str), encoding="utf-8"
+                )
                 archived.append(metadata)
 
             for err in export_data.get("errors", []):
@@ -1216,7 +1270,7 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                     continue  # Already has audio
 
                 pct = 0.9 + (i / max(len(archived), 1)) * 0.09
-                await ctx.report_progress(pct, f"Downloading audio {i+1}/{len(archived)}...")
+                await ctx.report_progress(pct, f"Downloading audio {i + 1}/{len(archived)}...")
 
                 try:
                     rl = _get_rate_limiter(ctx)
@@ -1247,7 +1301,7 @@ async def wave_export_archive(params: ExportArchiveInput, ctx: Context) -> str:
                 logger.warning("Skipping corrupted metadata at %s: %s", meta_path, exc)
 
         index = {
-            "archive_date": datetime.now(timezone.utc).isoformat(),
+            "archive_date": datetime.now(UTC).isoformat(),
             "total_sessions": len(all_archived),
             "new_this_run": len(archived),
             "errors": len(errors),
