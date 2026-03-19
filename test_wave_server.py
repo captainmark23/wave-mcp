@@ -1,27 +1,22 @@
 """
-Tests for wave_server.py — covers pure functions, validators, and the rate limiter.
+Tests for wave_mcp package — covers pure functions, validators, and the rate limiter.
 
 Run with: pytest test_wave_server.py -v
 """
 
 import asyncio
-import time
 
 import pytest
 
-from wave_server import (
-    _BLOCKED_DIRS,
-    _RateLimiter,
-    _format_duration,
-    _sanitize_md,
-    _validate_iso_date,
-    _validate_session_id,
-)
-
+from wave_mcp.constants import _BLOCKED_DIRS
+from wave_mcp.formatters import _format_duration, _sanitize_md
+from wave_mcp.rate_limiter import _RateLimiter
+from wave_mcp.validators import _validate_iso_date, _validate_session_id
 
 # ---------------------------------------------------------------------------
 # _validate_session_id
 # ---------------------------------------------------------------------------
+
 
 class TestValidateSessionId:
     def test_valid_uuid(self):
@@ -66,6 +61,7 @@ class TestValidateSessionId:
 # _validate_iso_date
 # ---------------------------------------------------------------------------
 
+
 class TestValidateIsoDate:
     def test_none_returns_none(self):
         assert _validate_iso_date(None, "since") is None
@@ -100,6 +96,7 @@ class TestValidateIsoDate:
 # ---------------------------------------------------------------------------
 # _sanitize_md
 # ---------------------------------------------------------------------------
+
 
 class TestSanitizeMd:
     def test_none_returns_empty(self):
@@ -140,15 +137,52 @@ class TestSanitizeMd:
         assert "\\*" in result
 
     def test_horizontal_rule_injection(self):
-        """Newline + --- could inject a horizontal rule."""
+        """Newline + --- could inject a horizontal rule — dashes are stripped."""
         result = _sanitize_md("text\n---\nmore")
+        # The --- pattern is stripped by the structural injection filter,
+        # which turns "text\n---\nmore" into "text\n\nmore" (paragraph break preserved).
+        assert "---" not in result
+        assert "\\-\\-\\-" not in result
+        assert "text" in result
+        assert "more" in result
+
+    def test_paragraph_breaks_preserved(self):
+        """Double newlines (paragraph breaks) should be preserved."""
+        result = _sanitize_md("paragraph one\n\nparagraph two")
+        assert "\n\n" in result
+        assert "paragraph one" in result
+        assert "paragraph two" in result
+
+    def test_single_newlines_collapsed_within_paragraph(self):
+        """Single newlines within a paragraph should collapse to spaces."""
+        result = _sanitize_md("line one\nline two\nline three")
+        # All within one paragraph — single newlines collapse
         assert "\n" not in result
-        assert "\\-" in result
+        assert "line one line two line three" in result
+
+    def test_heading_injection_stripped(self):
+        """Injected heading markers after newlines are stripped."""
+        result = _sanitize_md("text\n# Injected\nmore")
+        # The \n# pattern is stripped, so "# " becomes just a space
+        assert "\\# Injected" not in result.replace("\\", "")
+
+    def test_blockquote_injection_stripped(self):
+        """Injected blockquotes after newlines are stripped."""
+        result = _sanitize_md("text\n> quote\nmore")
+        # The \n> pattern is stripped
+        assert "\n>" not in result
+
+    def test_code_fence_injection_stripped(self):
+        """Injected code fences after newlines are stripped."""
+        result = _sanitize_md("text\n```\ncode\n```\nmore")
+        # The \n``` pattern is stripped
+        assert "\n```" not in result
 
 
 # ---------------------------------------------------------------------------
 # _format_duration
 # ---------------------------------------------------------------------------
+
 
 class TestFormatDuration:
     def test_none(self):
@@ -181,6 +215,7 @@ class TestFormatDuration:
 # _BLOCKED_DIRS constant
 # ---------------------------------------------------------------------------
 
+
 class TestBlockedDirs:
     def test_is_a_set(self):
         assert isinstance(_BLOCKED_DIRS, set)
@@ -197,6 +232,7 @@ class TestBlockedDirs:
 # ---------------------------------------------------------------------------
 # _RateLimiter
 # ---------------------------------------------------------------------------
+
 
 class TestRateLimiter:
     @pytest.fixture
