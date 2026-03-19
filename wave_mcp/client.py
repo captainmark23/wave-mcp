@@ -82,5 +82,5 @@ def _handle_api_error(e: Exception) -> NoReturn:
         logger.warning("Wave API connection error")
         raise ToolError("Could not connect to Wave API. Check your network connection.")
     # Generic fallback -- never expose raw exception details
-    logger.error("Unexpected error communicating with Wave API: %s", type(e).__name__, exc_info=True)
+    logger.error("Unexpected error communicating with Wave API: %s", type(e).__name__)
     raise ToolError("An unexpected error occurred while communicating with the Wave API. Please try again.")

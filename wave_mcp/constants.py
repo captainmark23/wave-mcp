@@ -18,6 +18,7 @@ MAX_TAG_LENGTH = 100
 MAX_TITLE_LENGTH = 500
 MAX_NOTES_LENGTH = 50_000
 MAX_CURSOR_LENGTH = 500
+MAX_AUDIO_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
 # Directories that must never be written to -- used by path validators
 _BLOCKED_DIRS = {
