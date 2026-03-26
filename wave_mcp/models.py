@@ -1,11 +1,8 @@
 """Pydantic input models for Wave MCP Server tools."""
 
-from pathlib import Path
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from wave_mcp.constants import (
-    _BLOCKED_DIRS,
     DEFAULT_PAGINATION_LIMIT,
     MAX_BULK_SESSIONS,
     MAX_CURSOR_LENGTH,
@@ -19,6 +16,7 @@ from wave_mcp.constants import (
 )
 from wave_mcp.validators import (
     _validate_iso_date,
+    _validate_output_path,
     _validate_session_id,
     _validate_session_type,
 )
@@ -358,18 +356,7 @@ class DownloadAudioInput(BaseModel):
     @field_validator("output_path")
     @classmethod
     def validate_output_path(cls, v: str) -> str:
-        v = v.strip()
-        if "\x00" in v:
-            raise ValueError("output_path must not contain null bytes")
-        p = Path(v)
-        if not p.is_absolute():
-            raise ValueError("output_path must be an absolute path (e.g. '/Users/me/Wave/audio.m4a')")
-        # Resolve symlinks before checking against blocked directories
-        resolved = str(p.resolve())
-        for part in _BLOCKED_DIRS:
-            if resolved.startswith(part + "/") or resolved == part:
-                raise ValueError(f"output_path must not be inside {part}/")
-        return v
+        return _validate_output_path(v, "output_path")
 
 
 class ExportArchiveInput(BaseModel):
@@ -398,18 +385,7 @@ class ExportArchiveInput(BaseModel):
     @field_validator("output_dir")
     @classmethod
     def validate_output_dir(cls, v: str) -> str:
-        v = v.strip()
-        if "\x00" in v:
-            raise ValueError("output_dir must not contain null bytes")
-        p = Path(v)
-        if not p.is_absolute():
-            raise ValueError("output_dir must be an absolute path (e.g. '/Users/me/Documents/Wave')")
-        # Resolve symlinks before checking against blocked directories
-        resolved = str(p.resolve())
-        for part in _BLOCKED_DIRS:
-            if resolved.startswith(part + "/") or resolved == part:
-                raise ValueError(f"output_dir must not be inside {part}/")
-        return v
+        return _validate_output_path(v, "output_dir")
 
     @field_validator("since")
     @classmethod

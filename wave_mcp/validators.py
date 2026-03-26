@@ -1,8 +1,9 @@
 """Shared validation functions for Wave MCP Server."""
 
 from datetime import datetime
+from pathlib import Path
 
-from wave_mcp.constants import SESSION_ID_PATTERN, VALID_SESSION_TYPES
+from wave_mcp.constants import _BLOCKED_DIRS, SESSION_ID_PATTERN, VALID_SESSION_TYPES
 
 
 def _validate_session_id(v: str) -> str:
@@ -33,4 +34,17 @@ def _validate_session_type(v: str | None) -> str | None:
         v = v.strip().lower()
         if v not in VALID_SESSION_TYPES:
             raise ValueError(f"session_type must be one of: {', '.join(sorted(VALID_SESSION_TYPES))}. Got: '{v}'")
+    return v
+
+
+def _validate_output_path(v: str, field_name: str) -> str:
+    """Validate an absolute output path is not inside blocked directories."""
+    v = v.strip()
+    p = Path(v)
+    if not p.is_absolute():
+        raise ValueError(f"{field_name} must be an absolute path (e.g. '/Users/me/Wave/output')")
+    resolved = str(p.resolve())
+    for part in _BLOCKED_DIRS:
+        if resolved.startswith(part + "/") or resolved == part:
+            raise ValueError(f"{field_name} must not be inside {part}/")
     return v

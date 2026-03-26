@@ -1,7 +1,9 @@
 """HTTP client helpers for Wave MCP Server."""
 
+import functools
 import logging
-from typing import NoReturn
+import re
+from typing import Any, Callable, NoReturn
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -20,6 +22,15 @@ from wave_mcp.rate_limiter import _RateLimiter
 
 logger = logging.getLogger("wave_mcp")
 
+# Pattern to strip Bearer tokens from error messages — matches any non-whitespace
+# after "Bearer " to catch URLs, base64, JWTs, and other token formats
+_BEARER_RE = re.compile(r"Bearer \S+")
+
+
+def _redact_tokens(msg: str) -> str:
+    """Strip potential auth tokens from error strings."""
+    return _BEARER_RE.sub("Bearer [REDACTED]", msg)
+
 
 def _get_client(ctx: Context) -> httpx.AsyncClient:
     """Extract the httpx client from lifespan context."""
@@ -29,6 +40,15 @@ def _get_client(ctx: Context) -> httpx.AsyncClient:
 def _get_rate_limiter(ctx: Context) -> _RateLimiter:
     """Extract the rate limiter from lifespan context."""
     return ctx.request_context.lifespan_context.rate_limiter
+
+
+def _validate_download_url(url: str) -> None:
+    """Validate that a download URL uses HTTPS to prevent SSRF via open redirects."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ToolError(f"Refusing to download from non-HTTPS URL (scheme: {parsed.scheme})")
 
 
 async def _check_rate_limit(ctx: Context) -> None:
@@ -42,6 +62,24 @@ async def _check_rate_limit(ctx: Context) -> None:
         )
 
 
+async def _wait_for_rate_limit(ctx: Context, max_retries: int = 3) -> None:
+    """Wait with exponential backoff until a rate-limit slot opens.
+
+    Use this inside pagination loops where failing immediately is too aggressive.
+    Raises ToolError if still limited after all retries.
+    """
+    import asyncio
+
+    rl = _get_rate_limiter(ctx)
+    for attempt in range(max_retries):
+        if await rl.check():
+            return
+        delay = 2 ** (attempt + 1)  # 2s, 4s, 8s
+        logger.debug("Rate limited, backing off %ds (attempt %d/%d)", delay, attempt + 1, max_retries)
+        await asyncio.sleep(delay)
+    raise ToolError("Rate limit exceeded after multiple retries. Try again in a moment.")
+
+
 def _handle_api_error(e: Exception) -> NoReturn:
     """Raise ToolError with actionable messages for common failure modes.
 
@@ -50,7 +88,7 @@ def _handle_api_error(e: Exception) -> NoReturn:
     """
     if isinstance(e, httpx.HTTPStatusError):
         status = e.response.status_code
-        logger.warning("Wave API error: status=%s url=%s", status, e.request.url.path)
+        logger.warning("Wave API error: status=%s", status)
         if status == 401:
             raise ToolError(
                 "Authentication failed. Your Wave API token may be invalid or expired. "
@@ -82,5 +120,25 @@ def _handle_api_error(e: Exception) -> NoReturn:
         logger.warning("Wave API connection error")
         raise ToolError("Could not connect to Wave API. Check your network connection.")
     # Generic fallback -- never expose raw exception details
-    logger.error("Unexpected error communicating with Wave API: %s", type(e).__name__)
+    # Redact tokens BEFORE truncating so tokens beyond 200 chars are still caught
+    logger.error("Unexpected error communicating with Wave API: %s: %s", type(e).__name__, _redact_tokens(str(e))[:200])
     raise ToolError("An unexpected error occurred while communicating with the Wave API. Please try again.")
+
+
+def _tool_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator that catches exceptions and routes them through _handle_api_error.
+
+    ToolError instances pass through unchanged; all other exceptions are
+    converted to user-friendly ToolError messages.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except Exception as e:
+            _handle_api_error(e)
+
+    return wrapper

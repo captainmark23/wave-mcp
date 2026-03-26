@@ -68,8 +68,8 @@ def _get_api_token() -> str:
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Keychain lookup failed: %s", exc)
     raise RuntimeError(
         "Wave API token not found. Set WAVE_API_TOKEN env var or add to macOS Keychain:\n"
         "  security add-generic-password -a wave-mcp -s wave-api-token -w YOUR_TOKEN"
