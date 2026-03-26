@@ -27,8 +27,10 @@ def _sanitize_md(text: str | None) -> str:
     for para in paragraphs:
         # Collapse single newlines to spaces within paragraphs
         para = para.replace("\n", " ").strip()
-        # Escape markdown formatting characters
-        for ch in r"\`*_{}[]()#+-.!|~":
+        # Escape markdown formatting characters that can inject structure.
+        # Deliberately skip . - ! ( ) which are common in plain text and only
+        # meaningful in narrow contexts already handled by the structural filters.
+        for ch in r"\`*_{}[]#+|~":
             para = para.replace(ch, f"\\{ch}")
         if para:
             sanitized.append(para)

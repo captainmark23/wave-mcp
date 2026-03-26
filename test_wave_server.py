@@ -5,13 +5,16 @@ Run with: pytest test_wave_server.py -v
 """
 
 import asyncio
+from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
+from wave_mcp.client import _handle_api_error, _redact_tokens, _validate_download_url, ToolError
 from wave_mcp.constants import _BLOCKED_DIRS
 from wave_mcp.formatters import _format_duration, _sanitize_md
 from wave_mcp.rate_limiter import _RateLimiter
-from wave_mcp.validators import _validate_iso_date, _validate_session_id
+from wave_mcp.validators import _validate_iso_date, _validate_output_path, _validate_session_id
 
 # ---------------------------------------------------------------------------
 # _validate_session_id
@@ -272,3 +275,131 @@ class TestRateLimiter:
     async def test_default_limit_is_50(self):
         rl = _RateLimiter()
         assert rl._max == 50
+
+
+# ---------------------------------------------------------------------------
+# _redact_tokens
+# ---------------------------------------------------------------------------
+
+
+class TestRedactTokens:
+    def test_redacts_bearer_token(self):
+        msg = "Error: Bearer sk_live_abc123 was invalid"
+        result = _redact_tokens(msg)
+        assert "sk_live_abc123" not in result
+        assert "Bearer [REDACTED]" in result
+
+    def test_redacts_bearer_with_url(self):
+        msg = "Bearer https://attacker.com/exfil"
+        result = _redact_tokens(msg)
+        assert "attacker.com" not in result
+        assert "Bearer [REDACTED]" in result
+
+    def test_no_token_unchanged(self):
+        msg = "Simple error message"
+        assert _redact_tokens(msg) == msg
+
+    def test_multiple_tokens(self):
+        msg = "Bearer tok1 and Bearer tok2"
+        result = _redact_tokens(msg)
+        assert "tok1" not in result
+        assert "tok2" not in result
+        assert result.count("[REDACTED]") == 2
+
+
+# ---------------------------------------------------------------------------
+# _handle_api_error
+# ---------------------------------------------------------------------------
+
+
+class TestHandleApiError:
+    def _make_http_error(self, status: int) -> httpx.HTTPStatusError:
+        request = MagicMock(spec=httpx.Request)
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = status
+        return httpx.HTTPStatusError("error", request=request, response=response)
+
+    def test_401_raises_auth_error(self):
+        with pytest.raises(ToolError, match="Authentication failed"):
+            _handle_api_error(self._make_http_error(401))
+
+    def test_403_raises_permission_error(self):
+        with pytest.raises(ToolError, match="Permission denied"):
+            _handle_api_error(self._make_http_error(403))
+
+    def test_404_raises_not_found(self):
+        with pytest.raises(ToolError, match="not found"):
+            _handle_api_error(self._make_http_error(404))
+
+    def test_429_raises_rate_limit(self):
+        with pytest.raises(ToolError, match="Rate limit"):
+            _handle_api_error(self._make_http_error(429))
+
+    def test_500_raises_generic_status(self):
+        with pytest.raises(ToolError, match="status 500"):
+            _handle_api_error(self._make_http_error(500))
+
+    def test_timeout_raises_timeout_error(self):
+        with pytest.raises(ToolError, match="timed out"):
+            _handle_api_error(httpx.ReadTimeout("timeout"))
+
+    def test_connect_error(self):
+        with pytest.raises(ToolError, match="Could not connect"):
+            _handle_api_error(httpx.ConnectError("refused"))
+
+    def test_generic_error_no_details_leaked(self):
+        with pytest.raises(ToolError, match="unexpected error"):
+            _handle_api_error(RuntimeError("internal secret details"))
+
+
+# ---------------------------------------------------------------------------
+# _validate_output_path
+# ---------------------------------------------------------------------------
+
+
+class TestValidateOutputPath:
+    def test_valid_absolute_path(self):
+        result = _validate_output_path("/Users/me/Wave/audio.m4a", "output_path")
+        assert result == "/Users/me/Wave/audio.m4a"
+
+    def test_strips_whitespace(self):
+        result = _validate_output_path("  /Users/me/file.txt  ", "output_path")
+        assert result == "/Users/me/file.txt"
+
+    def test_rejects_relative_path(self):
+        with pytest.raises(ValueError, match="absolute path"):
+            _validate_output_path("relative/path.txt", "output_path")
+
+    def test_rejects_blocked_etc(self):
+        with pytest.raises(ValueError, match="/etc/"):
+            _validate_output_path("/etc/passwd", "output_path")
+
+    def test_rejects_blocked_system(self):
+        with pytest.raises(ValueError, match="/System/"):
+            _validate_output_path("/System/Library/file", "output_path")
+
+    def test_field_name_in_error(self):
+        with pytest.raises(ValueError, match="my_field"):
+            _validate_output_path("relative", "my_field")
+
+
+# ---------------------------------------------------------------------------
+# _validate_download_url
+# ---------------------------------------------------------------------------
+
+
+class TestValidateDownloadUrl:
+    def test_https_allowed(self):
+        _validate_download_url("https://cdn.wave.co/audio/abc.m4a")
+
+    def test_http_rejected(self):
+        with pytest.raises(ToolError, match="non-HTTPS"):
+            _validate_download_url("http://evil.com/audio.m4a")
+
+    def test_ftp_rejected(self):
+        with pytest.raises(ToolError, match="non-HTTPS"):
+            _validate_download_url("ftp://files.example.com/audio.m4a")
+
+    def test_file_scheme_rejected(self):
+        with pytest.raises(ToolError, match="non-HTTPS"):
+            _validate_download_url("file:///etc/passwd")
