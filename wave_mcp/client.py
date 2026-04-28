@@ -3,7 +3,8 @@
 import functools
 import logging
 import re
-from typing import Any, Callable, NoReturn
+from collections.abc import Callable
+from typing import Any, NoReturn
 
 import httpx
 from mcp.server.fastmcp import Context

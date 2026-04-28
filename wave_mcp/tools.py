@@ -321,9 +321,7 @@ async def wave_search_sessions(params: SearchSessionsInput, ctx: Context) -> str
     """
     await _check_rate_limit(ctx)
     client = _get_client(ctx)
-    logger.info(
-        "wave_search_sessions: query='%s' limit=%s offset=%s", params.query[:50], params.limit, params.offset
-    )
+    logger.info("wave_search_sessions: query='%s' limit=%s offset=%s", params.query[:50], params.limit, params.offset)
     resp = await client.post(
         "/sessions/search",
         json={"query": params.query, "limit": params.limit, "offset": params.offset},
@@ -837,7 +835,11 @@ async def wave_list_all_sessions(params: ListAllSessionsInput, ctx: Context) -> 
 
     result_data = {
         "total_count": len(all_sessions),
-        **({"truncated": True, "note": f"Results limited to {max_pages} pages. More sessions may exist."} if truncated else {}),
+        **(
+            {"truncated": True, "note": f"Results limited to {max_pages} pages. More sessions may exist."}
+            if truncated
+            else {}
+        ),
         "sessions": [
             {
                 "id": s.get("id"),

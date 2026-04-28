@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from wave_mcp.client import _handle_api_error, _redact_tokens, _validate_download_url, ToolError
+from wave_mcp.client import ToolError, _handle_api_error, _redact_tokens, _validate_download_url
 from wave_mcp.constants import _BLOCKED_DIRS
 from wave_mcp.formatters import _format_duration, _sanitize_md
 from wave_mcp.rate_limiter import _RateLimiter
