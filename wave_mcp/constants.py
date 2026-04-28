@@ -8,16 +8,26 @@ from enum import StrEnum
 # ---------------------------------------------------------------------------
 
 API_BASE_URL = "https://api.wave.co/v1"
-DEFAULT_TIMEOUT = 30.0
+DEFAULT_TIMEOUT = 30.0  # seconds; generous for transcription endpoints
+
+# Pagination — Wave API hard limit is 100 per page
 MAX_PAGINATION_LIMIT = 100
-DEFAULT_PAGINATION_LIMIT = 20
+DEFAULT_PAGINATION_LIMIT = 20  # sensible default to avoid large payloads
+
+# Bulk operations — Wave /sessions/bulk accepts up to 50 IDs per request
 MAX_BULK_SESSIONS = 50
-MAX_SEARCH_RESULTS = 50
+MAX_SEARCH_RESULTS = 50  # matches bulk limit for discover-and-export workflow
+
+# User-content limits — match Wave API constraints
 MAX_TAGS = 20
 MAX_TAG_LENGTH = 100
 MAX_TITLE_LENGTH = 500
-MAX_NOTES_LENGTH = 50_000
+MAX_NOTES_LENGTH = 50_000  # ~50 KB of text
+
+# Cursor tokens are opaque strings from the API; cap length to prevent abuse
 MAX_CURSOR_LENGTH = 500
+
+# Safety cap for audio downloads — prevents filling disk on large recordings
 MAX_AUDIO_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
 # Directories that must never be written to -- used by path validators
