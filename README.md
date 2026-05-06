@@ -29,6 +29,7 @@ MCP server for [Wave](https://wave.co) — call recording, transcription, and me
 ```bash
 git clone https://github.com/captainmark23/wave-mcp.git
 cd wave-mcp
+uv sync   # install Python dependencies declared in pyproject.toml
 ```
 
 ### Store your API token in macOS Keychain
