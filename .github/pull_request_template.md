@@ -8,10 +8,10 @@ Brief description of what this PR does.
 
 ## Testing
 
-- [ ] `python -m py_compile wave_server.py` passes
-- [ ] Tested with Claude Desktop (if tool behavior changed)
+- [ ] `uv run pytest` passes
+- [ ] `uv run ruff check .` passes
 - [ ] Updated CHANGELOG.md
-- [ ] Updated README.md (if tools added/removed)
+- [ ] Updated README.md (if behavior/flags changed)
 
 ## Related issues
 

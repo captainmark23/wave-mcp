@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a problem with the Wave MCP server
+about: Report a problem with the wave-archive CLI
 title: ''
 labels: bug
 assignees: ''
@@ -10,21 +10,20 @@ assignees: ''
 A clear description of what went wrong.
 
 **To reproduce**
-1. Tool called: `wave_...`
-2. Parameters used: `...`
+1. Command run: `wave-archive ...`
+2. Flags used: `...`
 3. Error message or unexpected output
 
 **Expected behavior**
 What you expected to happen.
 
 **Environment**
-- OS: [e.g. macOS 14.2]
+- OS: [e.g. macOS 14.2 / Ubuntu 24.04 / Windows 11]
 - Python version: [e.g. 3.12]
-- wave-mcp version: [e.g. 2.0.0]
-- Claude Desktop version: [if applicable]
+- wave-archive version: [e.g. 3.0.0]
 
-**Log output**
-Paste relevant lines from `~/.wave-mcp/wave-mcp.log`:
+**Output**
+Re-run with `-v` and paste the relevant lines (redact any tokens):
 ```
-[paste logs here]
+[paste output here]
 ```

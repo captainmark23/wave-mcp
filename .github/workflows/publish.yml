@@ -27,17 +27,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Compile check (package)
-        run: uv run python -m py_compile wave_mcp/server.py
-
-      - name: Compile check (entry point)
-        run: uv run python -m py_compile wave_server.py
+      - name: Compile check
+        run: uv run python -m py_compile wave_archive.py
 
       - name: Import check
-        run: uv run python -c "import wave_mcp.tools; print('Package imports OK')"
+        run: uv run python -c "import wave_archive; print('Module imports OK')"
 
       - name: Run tests
-        run: uv run python -m pytest test_wave_server.py -q
+        run: uv run python -m pytest test_wave_archive.py -q
 
   lint:
     runs-on: ubuntu-latest
@@ -74,14 +71,14 @@ jobs:
         run: uv sync --extra dev
 
       - name: Mypy
-        run: uv run mypy wave_mcp/ --ignore-missing-imports --disable-error-code=arg-type
+        run: uv run mypy wave_archive.py --ignore-missing-imports --disable-error-code=arg-type
 
   publish:
     needs: [check, lint, typecheck]
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/wave-mcp
+      url: https://pypi.org/p/wave-archive
 
     steps:
       - uses: actions/checkout@v6
