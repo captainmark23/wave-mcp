@@ -1,171 +1,176 @@
-# wave-mcp
+# wave-archive
 
-MCP server for [Wave](https://wave.co) — call recording, transcription, and meeting intelligence via Claude.
+Local backup tooling for [Wave](https://wave.co) — call recording, transcription, and meeting intelligence.
 
-## Features
+> **This repo used to ship a custom MCP server for Wave.** Wave now runs an
+> **official hosted MCP server** and a versioned REST API, so the custom server
+> has been retired. For using your recordings inside Claude/ChatGPT/Cursor,
+> **enable the official MCP** (below). This repo now keeps only the one thing the
+> hosted MCP doesn't do: writing a complete **offline archive** of your sessions
+> to disk. See [CHANGELOG.md](CHANGELOG.md) for the migration.
 
-- **List sessions** — browse recent meetings with date, duration, type, and platform
-- **List all sessions** — auto-paginate through your entire session history
-- **Get session details** — full metadata including AI summary, notes, and tags
-- **Get transcripts** — speaker-attributed transcripts with timestamps
-- **Semantic search** — find sessions by topic using natural language
-- **Discover and export** — search + bulk export in one step
-- **Bulk export** — batch-process up to 50 sessions with transcripts and summaries
-- **Download audio** — save audio recordings to local files
-- **Export archive** — create a complete local backup of all sessions (metadata, summaries, transcripts, audio)
-- **Media URLs** — get signed audio/video download links
-- **Account info** — check subscription status and session count
-- **Update sessions** — edit titles, notes, tags, and favorites
-- **Statistics** — aggregated session counts, durations, and breakdowns
+---
 
-## Requirements
+## For teams: enable the official Wave MCP server
 
+The official hosted MCP server (`https://mcp.wave.co`) is the recommended way for
+your organisation to bring Wave recordings into LLM clients. It beats a
+self-hosted server on every axis that matters for a team:
+
+- **Per-user OAuth** — each teammate signs in with their own Wave account and sees
+  only their own recordings. No shared API token to distribute, store, or rotate.
+- **Cross-platform** — works in Claude (web, desktop, mobile), Claude Code,
+  ChatGPT (Developer Mode / Apps), Cursor, Windsurf, Zed, and Zapier.
+- **Zero maintenance** — Wave operates it and it tracks new API features
+  automatically.
+- **Read-only, scoped** to the authenticated user.
+
+### Requirements
+- A Wave plan that includes API access: **Plus, Pro, Team, Enterprise, or Edu**.
+- Each user enables **Developer Mode** in the Wave app: **Settings → Advanced**.
+
+### Enable it in a client
+Add `https://mcp.wave.co` as an MCP connector using **OAuth**:
+
+- **Claude (desktop/web):** Settings → Connectors → **Add custom connector** →
+  paste `https://mcp.wave.co` → choose **OAuth** → sign in.
+- **Claude Code:** add the connector, then run `/mcp` and complete the OAuth flow
+  in your browser.
+- **ChatGPT / Cursor / Windsurf / Zed:** add a custom MCP/connector pointing at
+  `https://mcp.wave.co` and authenticate via OAuth.
+
+Once connected, your recordings, transcripts, summaries, folders, and semantic
+search are available to the assistant as tools — no token wrangling.
+
+### Rolling it out to the org
+1. Confirm the workspace/team is on an API-enabled plan.
+2. Ask each member to enable Developer Mode and add the connector (steps above).
+3. Because auth is per-user OAuth, there's nothing central to provision — access
+   is automatically scoped to what each person can already see in Wave.
+
+Docs: <https://api.wave.co/mcp> · <https://wave.co/agents>
+
+---
+
+## When you need more than the MCP: the REST API and this CLI
+
+The hosted MCP is read-only and ambient — great for "ask about my meetings," but
+it does not write files, run on a schedule, or write back metadata. For those,
+use the **official REST API** directly:
+
+| Need | Use |
+|---|---|
+| Recordings ambient in an LLM client | Official MCP (`mcp.wave.co`) |
+| Server-side integration, cron, webhooks | REST API (`api.wave.co`) |
+| Write back title/notes/tags/favorite | REST API `PATCH /v1/sessions/{id}` |
+| React to new recordings | REST API webhooks (`session.completed`) |
+| **Full offline backup of your sessions** | **`wave-archive` (this repo)** |
+
+Full REST reference: <https://api.wave.co/reference> · OpenAPI at
+<https://api.wave.co/v1/openapi.json>. Wave also publishes an official CLI
+(`npm i -g @waveai/cli`).
+
+---
+
+## `wave-archive` — local backup CLI
+
+`wave-archive` walks your Wave sessions via the official REST API and writes an
+organized, **incremental** archive to a local folder: metadata, AI summaries,
+speaker-attributed transcripts, and (optionally) audio.
+
+### Requirements
 - Python 3.11+
-- [uv](https://docs.astral.sh/uv/) (Python package manager)
-- A Wave API token — generate one at [Wave Settings](https://app.wave.co/settings/integrations/api)
+- A Wave API token from
+  [Wave Settings → Integrations → API](https://app.wave.co/settings/integrations/api).
+  Tokens start with `wave_api_`. Grant the scopes you need:
+  - `sessions:read` and `transcripts:read` — required
+  - `media:read` — only if you use `--include-audio`
 
-## Installation
-
+### Install
 ```bash
 git clone https://github.com/captainmark23/wave-mcp.git
 cd wave-mcp
+uv sync            # or: pip install -e .
 ```
 
-### Store your API token in macOS Keychain
-
-The server retrieves your API token from the macOS Keychain at startup — no plaintext config files.
+### Authenticate
+The token is read from the `WAVE_API_KEY` environment variable (cross-platform):
 
 ```bash
-security add-generic-password -a wave-mcp -s wave-api-token -w 'YOUR_API_TOKEN'
+export WAVE_API_KEY='wave_api_...'
 ```
 
-To update or rotate your token:
+(For backwards compatibility it also accepts `WAVE_API_TOKEN`, and on macOS it
+falls back to the legacy Keychain entry `wave-mcp / wave-api-token` if present.)
 
+### Use
 ```bash
-security delete-generic-password -a wave-mcp -s wave-api-token
-security add-generic-password -a wave-mcp -s wave-api-token -w 'YOUR_NEW_TOKEN'
+# Back up everything to ~/Documents/Wave (safe to re-run; only fetches new sessions)
+wave-archive --output-dir ~/Documents/Wave
+
+# Only sessions in your "work" folder, with audio
+wave-archive -o ~/Documents/Wave --folder work --include-audio
+
+# Only sessions after a date, print a JSON summary
+wave-archive -o ~/Documents/Wave --since 2025-01-01 --json
 ```
 
-## Configuration
+Run `wave-archive --help` for all options. If not installed as a script, run it
+directly: `python wave_archive.py --output-dir ...`.
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "wave-mcp": {
-      "command": "/path/to/wave-mcp/launch.sh"
-    }
-  }
-}
-```
-
-Restart Claude Desktop after adding the config.
-
-## Tools (13)
-
-| Tool | Description | Read-only |
-|---|---|---|
-| `wave_list_sessions` | List recent sessions with cursor-based pagination | Yes |
-| `wave_list_all_sessions` | Auto-paginate through entire session history | Yes |
-| `wave_get_session` | Get full session details including summary and notes | Yes |
-| `wave_get_transcript` | Get speaker-attributed transcript with timestamps | Yes |
-| `wave_search_sessions` | Semantic search across all sessions | Yes |
-| `wave_discover_and_export` | Search + bulk export in one step | Yes |
-| `wave_get_stats` | Aggregated statistics (counts, durations, breakdowns) | Yes |
-| `wave_bulk_export` | Export up to 50 sessions at once | Yes |
-| `wave_get_media` | Get signed audio/video URLs (expire in ~1 hour) | Yes |
-| `wave_download_audio` | Download audio recording to a local file | No |
-| `wave_export_archive` | Create a full local archive of all sessions | No |
-| `wave_get_account` | Account profile, subscription status, session count | Yes |
-| `wave_update_session` | Update title, notes, tags, or favorite status | No |
-
-All tools support `response_format` parameter: `'markdown'` (default, human-readable) or `'json'` (structured data).
-
-### Key tool: `wave_export_archive`
-
-Creates a complete local backup of your Wave data:
-
-```
-Ask Claude: "Archive all my Wave sessions to ~/Documents/Wave"
-```
-
-This creates organized folders like:
+### Output layout
 ```
 Wave/
-  20250722_Strategic-Board-Meeting/
+  20250418_Weekly-product-sync_XF2KJM/
     metadata.json
     summary.md
     transcript.md
-    audio.m4a (optional)
-  20250723_Team-Standup/
+    audio.m4a          # only with --include-audio
+  20250419_Team-standup_A9QW3Z/
     ...
-  index.json
+  index.json           # run summary: counts, errors, timestamp
 ```
 
-The archive is incremental — safe to re-run without duplicating work.
+The archive is incremental — a session whose folder already contains a
+`metadata.json` is skipped, so re-running only fetches what's new. Ideal as a
+cron job.
+
+### Scoping work vs. personal (folders)
+If one Wave account mixes work and personal recordings, organise the ones your
+backup should include into a **folder** in the Wave app, then pass
+`--folder work`. Only sessions in that folder are archived — a clean,
+auditable default-deny boundary with no server-side tagging required.
+
+### Automate it
+```bash
+# Nightly backup (crontab)
+0 2 * * *  WAVE_API_KEY=wave_api_... /path/to/.venv/bin/wave-archive -o /backups/wave >> /var/log/wave-archive.log 2>&1
+```
+For event-driven backups, register a `session.completed` webhook on the REST API
+and trigger `wave-archive` from your handler.
 
 ## Security
+- Token read from the environment (or macOS Keychain), never written to disk.
+- Session IDs validated against a strict pattern before use as path components
+  (prevents path traversal); unsafe IDs are skipped and reported.
+- Archive directory is validated so it cannot be a system location.
+- Audio is only downloaded over HTTPS, with a 2 GB per-file cap; partial files
+  are cleaned up on failure.
+- Transcript and summary content is sanitized against markdown injection before
+  being written to disk.
+- Summary/transcript/metadata files are written with owner-only permissions
+  (`0600`) where the OS supports it.
+- API errors and logs redact anything resembling a token.
 
-- API token stored in macOS Keychain, never in plaintext files
-- Session ID validation prevents path traversal (alphanumeric + hyphens/underscores only)
-- Audio download path validation blocks writes to system directories
-- Client-side rate limiting (50 requests/min) protects your Wave API quota
-- Markdown output is sanitized against injection
-- Error messages are actionable but never expose raw exceptions or internal details
-- Signed media URLs are flagged as sensitive in responses
-- Session titles are not logged (privacy protection)
+## Rate limits
+The REST API allows 60 requests/minute and 10,000/day per token. The CLI backs
+off automatically on `429`/`5xx` (honouring `Retry-After`).
 
-## Rate Limits
-
-- **Client-side:** 50 requests/minute (configurable)
-- **Wave API:** 60 requests/minute, 1,000/day
-
-Rate limit headers from Wave (`X-RateLimit-Remaining`, `X-RateLimit-Reset`) are available in API responses.
-
-## Known Limitations
-
-- The `/v1/sessions` list endpoint only returns completed sessions with summaries. Your account may have more sessions than the list shows. Use `wave_search_sessions` or `wave_list_all_sessions` to discover as many as possible.
-- A small number of Wave sessions have corrupted IDs (title strings instead of UUIDs) due to a Wave data integrity issue. These are flagged in search results but cannot be accessed via the API.
-
-## Logs
-
-The server writes a persistent log to `~/.wave-mcp/wave-mcp.log` (5MB max, 3 rotated backups):
-
+## Development
 ```bash
-tail -50 ~/.wave-mcp/wave-mcp.log
+uv run pytest              # tests
+uv run ruff check .        # lint
 ```
-
-## Troubleshooting
-
-### Server disconnected in Claude Desktop
-
-Check the log first:
-
-```bash
-cat ~/.wave-mcp/wave-mcp.log
-```
-
-Then ensure your API token is stored in the Keychain:
-
-```bash
-security find-generic-password -a wave-mcp -s wave-api-token -w
-```
-
-If it returns an error, add the token (see Installation above).
-
-### Authentication errors
-
-Your token may be expired (tokens last 1 year). Generate a new one at [Wave Settings](https://app.wave.co/settings/integrations/api) and update the Keychain entry.
-
-### uv not found
-
-Install uv: `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
-
-## Contributing
-
-Issues and pull requests are welcome. Please see [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## License
-
 MIT

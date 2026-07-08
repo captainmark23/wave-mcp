@@ -1,14 +1,14 @@
 [project]
-name = "wave-mcp"
-version = "2.0.0"
-description = "MCP server for Wave call recording and transcription API"
+name = "wave-archive"
+version = "3.0.0"
+description = "Local backup CLI for Wave sessions, built on the official Wave REST API"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
     {name = "captainmark23"},
 ]
-keywords = ["mcp", "wave", "transcription", "meeting", "recording"]
+keywords = ["wave", "transcription", "meeting", "recording", "backup", "archive"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -19,28 +19,25 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "mcp[cli]>=1.0.0,<2.0.0",
     "httpx>=0.27.0,<1.0.0",
-    "pydantic>=2.0.0,<3.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
-    "pytest-asyncio>=0.21",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
 ]
 
 [project.scripts]
-wave-mcp = "wave_mcp.server:main"
+wave-archive = "wave_archive:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["wave_mcp"]
+py-modules = ["wave_archive"]
 
 # ---------------------------------------------------------------------------
 # Ruff
@@ -62,7 +59,3 @@ ignore = ["E501"]  # line length handled by formatter
 python_version = "3.11"
 warn_return_any = false
 warn_unused_configs = true
-
-[[tool.mypy.overrides]]
-module = "mcp.*"
-ignore_missing_imports = true

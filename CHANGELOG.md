@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-07-08
+
+### Changed
+- **BREAKING: the custom MCP server has been retired in favour of Wave's official
+  hosted MCP server** (`https://mcp.wave.co`). Ambient access to recordings in
+  Claude/ChatGPT/Cursor/etc. is now handled by the official server with per-user
+  OAuth — see the README for team rollout steps. The 13 custom MCP tools
+  (`wave_list_sessions`, `wave_get_transcript`, `wave_search_sessions`, …) and
+  the `wave-mcp` server entry point are removed.
+- This project is now **`wave-archive`**, a single cross-platform CLI that keeps
+  the one capability the hosted MCP does not provide: writing a full local backup
+  of your sessions. It is built on the official Wave REST API (`api.wave.co/v1`).
+
+### Added
+- `wave-archive` CLI: incremental archive of metadata, summaries, transcripts,
+  and optional audio to a local folder.
+- `--folder` scoping using the official Wave folders endpoint, so a backup can be
+  limited to (e.g.) a "work" folder for clean work/personal separation.
+- Cross-platform token resolution via `WAVE_API_KEY` (env), with
+  `WAVE_API_TOKEN` and the legacy macOS Keychain entry accepted as fallbacks.
+- Automatic backoff on `429`/`5xx`, honouring `Retry-After`.
+
+### Removed
+- The `wave_mcp` package, the FastMCP server, `wave_server.py`, the macOS-only
+  `launch.sh` launcher, and the `mcp`/`pydantic` dependencies.
+- The UUID-only session-ID check, which rejected Wave's current `sess_…` IDs;
+  replaced with a path-safety check that accepts them.
+
 ## [2.0.0] - 2026-03-18
 
 ### Added
